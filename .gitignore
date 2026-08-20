@@ -6,6 +6,10 @@ node_modules/
 crash.log
 npm-debug.log*
 
+# Git credentials (never commit)
+.git-credentials
+.git-credentials-*
+
 # OS / editor files
 .DS_Store
 Thumbs.db
