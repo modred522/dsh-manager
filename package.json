@@ -8,6 +8,14 @@
   },
   "author": "",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/modred522/dsh-manager.git"
+  },
+  "homepage": "https://github.com/modred522/dsh-manager",
+  "bugs": {
+    "url": "https://github.com/modred522/dsh-manager/issues"
+  },
   "devDependencies": {
     "electron": "^43.4.0"
   }
