@@ -32,10 +32,11 @@ Remove-Item $Zip -Force
 
 Write-Host "[2/4] Writing package metadata for the packaged app..."
 $pjPath = Join-Path $AppDir "package.json"
-$pj = Get-Content $pjPath -Raw | ConvertFrom-Json
+# Read as UTF-8 explicitly: PowerShell 5.1 reads no-BOM files as ANSI.
+$pj = [System.IO.File]::ReadAllText($pjPath) | ConvertFrom-Json
 $pj.author = "modred522"
 $pj.version = $Version
-$pj.build = [ordered]@{
+$buildConfig = [ordered]@{
     appId       = "com.modred522.dsh-manager"
     productName = "DSH Manager"
     asar        = $false
@@ -43,7 +44,10 @@ $pj.build = [ordered]@{
     files       = @("main.js", "preload.js", "find-dsh.ps1", "renderer/**", "assets/whale.png", "assets/app.ico", "package.json", "LICENSE")
     win         = [ordered]@{ target = @([ordered]@{ target = "zip"; arch = @("x64") }); icon = "assets/app.ico" }
 }
-$pj | ConvertTo-Json -Depth 10 | Set-Content $pjPath -Encoding UTF8
+# PSCustomObject cannot take new properties by assignment; use Add-Member.
+$pj | Add-Member -NotePropertyName 'build' -NotePropertyValue $buildConfig
+# Write WITHOUT BOM (electron-rebuild JSON.parse rejects BOM).
+[System.IO.File]::WriteAllText($pjPath, ($pj | ConvertTo-Json -Depth 10))
 
 Write-Host "[3/4] Installing electron + electron-builder (all caches redirected)..."
 $env:npm_config_cache = Join-Path $OutDir "npm-cache"

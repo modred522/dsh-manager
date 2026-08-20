@@ -8,6 +8,10 @@
 2. **`$PID` 是 PowerShell 只读自动变量**（大小写不敏感）。用 `$pid` 当变量名会报 `Cannot overwrite variable PID`，且若在 `catch {}` 里会被静默吞掉。用 `$procId` 等其它名字。
 3. 外部命令输出捕获：`netstat -ano 2>$null` 可用；空 `catch {}` 块尽量不用（错误被吞难以排查）。
 4. 图标渲染脚本需要 **STA**（WPF 渲染）：用 `powershell.exe -NoProfile -STA -File ...` 运行。
+5. **处理 UTF-8 无 BOM 文件（package.json 等）**：PS 5.1 的 `Get-Content` 按 ANSI 读 → 中文变乱码、JSON 解析失败。用 `[System.IO.File]::ReadAllText()` 读。
+6. **写回 JSON 别用 `Set-Content -Encoding UTF8`**（PS 5.1 会加 BOM），electron-rebuild/JSON.parse 不认 BOM。用 `[System.IO.File]::WriteAllText()`（默认无 BOM）。
+7. **ConvertFrom-Json 的 PSCustomObject 不能 `$obj.新属性 = x`**（属性不存在时抛错），用 `Add-Member -NotePropertyName ... -NotePropertyValue ...`。
+8. **New-Object 构造参数里别写带运算的逗号表达式**：`Point($x + 18, 448)` 被解析成数组相加报 `op_Addition`，先算变量再传参。
 
 ## 二、开发环境（DSH 会话沙箱）限制
 
