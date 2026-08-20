@@ -52,7 +52,7 @@ npm start
 
 Portable zip: extract and run, no Electron dev environment needed. Node.js and the dsh CLI are still required on the machine (the manager uses them to start/update DSH).
 
-1. Download the latest `DSH Manager-<version>-win.zip` from [Releases](https://github.com/modred522/dsh-manager/releases)
+1. Download the latest `DSH-Manager-<version>-win.zip` from [Releases](https://github.com/modred522/dsh-manager/releases)
 2. Extract it anywhere and double-click `DSH Manager.exe`
 3. Optionally create a desktop shortcut afterwards via "Overview → Tools"; the app lives in the system tray
 

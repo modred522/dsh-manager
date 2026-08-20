@@ -52,7 +52,7 @@ npm start
 
 便携版 zip：解压即用，无需搭建 Electron 开发环境。仍需要本机装有 **Node.js 与 dsh CLI**（管理器通过它们启动/更新 DSH）。
 
-1. 到 [Releases](https://github.com/modred522/dsh-manager/releases) 下载最新的 `DSH Manager-<版本>-win.zip`
+1. 到 [Releases](https://github.com/modred522/dsh-manager/releases) 下载最新的 `DSH-Manager-<版本>-win.zip`
 2. 解压到任意目录，双击 `DSH Manager.exe`
 3. 首次运行后可在「总览 → 工具」创建桌面快捷方式；应用托盘常驻
 
