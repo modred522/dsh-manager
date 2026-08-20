@@ -39,6 +39,7 @@
 5. 检测 dsh 进程**别只靠命令行匹配**（历史上失败过）：netstat 端口（3080）是可靠主路径。
 6. 更新 dsh = `npm install -g @deepseek-ai/dsh@<ver>`；无内置回滚 → 管理器自己记录旧版本号实现回滚。
 7. **会话持久化根在 `dsh-base` 的 `cordis.patch.yml` 里**（`session-persistence-jsonl` 行，`root: !!js dshHomePath('sessions')`）。管理器的会话隔离靠 `dsh --patch <file>` 覆盖该行——注意两点：① 补丁是**整行 config 替换**（只写 root 即可，其余键有默认值）；② dsh 升级若改行 id 会静默失效（匹配不到只 warn），管理器启动时 `verifyHeadlessPatchRow()` 检查并告警。持久层**无删除接口**，删文件是正规途径，但只删管理器自己的 `analysis-sessions` 目录，**绝不碰 `$DSH_HOME/sessions` 下用户会话**。
+8. **检查 dsh 更新不能只读 `npm view <pkg> version`（= latest 标签）**：dsh 的 rc 预发行版惯例挂在 `next` 标签上（实测 rc.8 在 next、rc.7 在 latest），只读 latest 会漏报。正确做法：`npm view dist-tags --json` 取所有标签的最高版本。且版本比较要用 semver 规则逐段比预发布（rc.10 > rc.9，纯字符串比较会错），main.js 与 renderer/renderer.js 各有一份 compareVersions，**两处都要同步改**。
 
 ## 五、UI / CSS 坑
 

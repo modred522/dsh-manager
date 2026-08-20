@@ -246,22 +246,47 @@ function renderState(s) {
 }
 
 function compareVersions(a, b) {
+  // 与 main.js 保持一致的 semver 预发布比较（rc.10 > rc.9 按数字段比较）。
   const parse = (v) => {
     const s = String(v || '').trim().replace(/^v/, '');
-    const [core, ...pre] = s.split('-');
+    const [core, ...preParts] = s.split('-');
     const nums = (core || '').split('.').map((n) => parseInt(n, 10) || 0);
     while (nums.length < 3) nums.push(0);
-    return { nums, pre: pre.join('-') };
+    const pre = preParts.length
+      ? preParts.join('-').split('.').map((p) => (/^\d+$/.test(p) ? parseInt(p, 10) : p))
+      : null;
+    return { nums, pre };
+  };
+  const cmpPre = (xp, yp) => {
+    if (xp === null && yp === null) return 0;
+    if (xp === null) return 1;
+    if (yp === null) return -1;
+    const len = Math.max(xp.length, yp.length);
+    for (let i = 0; i < len; i++) {
+      const x = xp[i];
+      const y = yp[i];
+      if (x === undefined) return -1;
+      if (y === undefined) return 1;
+      const xNum = typeof x === 'number';
+      const yNum = typeof y === 'number';
+      if (xNum && yNum) {
+        if (x !== y) return x > y ? 1 : -1;
+      } else if (xNum) {
+        return 1;
+      } else if (yNum) {
+        return -1;
+      } else if (x !== y) {
+        return x > y ? 1 : -1;
+      }
+    }
+    return 0;
   };
   const x = parse(a);
   const y = parse(b);
   for (let i = 0; i < 3; i++) {
     if (x.nums[i] !== y.nums[i]) return x.nums[i] > y.nums[i] ? 1 : -1;
   }
-  if (!x.pre && !y.pre) return 0;
-  if (!x.pre) return 1;
-  if (!y.pre) return -1;
-  return x.pre === y.pre ? 0 : (x.pre > y.pre ? 1 : -1);
+  return cmpPre(x.pre, y.pre);
 }
 
 // ---------------- 用量面板 ----------------

@@ -261,10 +261,22 @@ function loadCorePackages() {
 function getLatestVersion() {
   return new Promise((resolve) => {
     try {
-      exec('npm view @deepseek-ai/dsh version', { windowsHide: true, timeout: 60000 }, (_err, stdout) => {
-        const lines = (stdout || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
-        const v = lines.find((l) => /^v?\d+\.\d+\.\d+/.test(l));
-        resolve(v ? v.replace(/^v/, '') : null);
+      // 注意：不能只读 `npm view <pkg> version`（= latest 标签）。
+      // dsh 的 rc 预发行版惯例挂在 `next` 标签上（如 rc.8 在 next、rc.7 在 latest），
+      // 只读 latest 会把 rc.8 漏掉。这里取所有 dist-tags 中的最高版本。
+      exec('npm view @deepseek-ai/dsh dist-tags --json', { windowsHide: true, timeout: 60000 }, (_err, stdout) => {
+        try {
+          const tags = JSON.parse(stdout || '{}');
+          let best = null;
+          for (const v of Object.values(tags)) {
+            const s = String(v || '').trim().replace(/^v/, '');
+            if (!/^\d+\.\d+\.\d+/.test(s)) continue;
+            if (!best || compareVersions(s, best) > 0) best = s;
+          }
+          resolve(best);
+        } catch {
+          resolve(null);
+        }
       });
     } catch {
       resolve(null);
@@ -273,22 +285,48 @@ function getLatestVersion() {
 }
 
 function compareVersions(a, b) {
+  // 预发布段按数字段/字符串段逐段比较（semver 规则）：
+  // rc.10 > rc.9（纯字符串比较会错）；数字段大于字符串段；缺段者更小。
   const parse = (v) => {
     const s = String(v || '').trim().replace(/^v/, '');
-    const [core, ...pre] = s.split('-');
+    const [core, ...preParts] = s.split('-');
     const nums = (core || '').split('.').map((n) => parseInt(n, 10) || 0);
     while (nums.length < 3) nums.push(0);
-    return { nums, pre: pre.join('-') };
+    const pre = preParts.length
+      ? preParts.join('-').split('.').map((p) => (/^\d+$/.test(p) ? parseInt(p, 10) : p))
+      : null;
+    return { nums, pre };
+  };
+  const cmpPre = (xp, yp) => {
+    if (xp === null && yp === null) return 0;
+    if (xp === null) return 1;
+    if (yp === null) return -1;
+    const len = Math.max(xp.length, yp.length);
+    for (let i = 0; i < len; i++) {
+      const x = xp[i];
+      const y = yp[i];
+      if (x === undefined) return -1;
+      if (y === undefined) return 1;
+      const xNum = typeof x === 'number';
+      const yNum = typeof y === 'number';
+      if (xNum && yNum) {
+        if (x !== y) return x > y ? 1 : -1;
+      } else if (xNum) {
+        return 1;
+      } else if (yNum) {
+        return -1;
+      } else if (x !== y) {
+        return x > y ? 1 : -1;
+      }
+    }
+    return 0;
   };
   const x = parse(a);
   const y = parse(b);
   for (let i = 0; i < 3; i++) {
     if (x.nums[i] !== y.nums[i]) return x.nums[i] > y.nums[i] ? 1 : -1;
   }
-  if (!x.pre && !y.pre) return 0;
-  if (!x.pre) return 1;
-  if (!y.pre) return -1;
-  return x.pre === y.pre ? 0 : (x.pre > y.pre ? 1 : -1);
+  return cmpPre(x.pre, y.pre);
 }
 
 function isServerUp(url, timeoutMs = 1500) {
