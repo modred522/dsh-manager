@@ -1,0 +1,20 @@
+appId: com.modred522.dsh-manager
+productName: DSH Manager
+asar: false
+directories:
+  output: release
+files:
+  - main.js
+  - preload.js
+  - find-dsh.ps1
+  - renderer/**
+  - assets/whale.png
+  - assets/app.ico
+  - package.json
+  - LICENSE
+win:
+  target:
+    - target: zip
+      arch:
+        - x64
+  icon: assets/app.ico

@@ -56,10 +56,17 @@ npm start
 2. 解压到任意目录，双击 `DSH Manager.exe`
 3. 首次运行后可在「总览 → 工具」创建桌面快捷方式；应用托盘常驻
 
-构建发行包（维护者）：在**独立目录**打包，不污染源码树：
+发版（维护者）：**推 tag 自动发版**——GitHub Actions 在服务器上自动打包 zip 并创建 Release：
 
 ```powershell
-powershell -NoProfile -File tools\build-release.ps1   # 输出到项目内 DSHManagerRelease\release（已 gitignore）
+git tag v1.0.2
+git push origin v1.0.2
+```
+
+本地手动打包（备用）：输出到项目内 `DSHManagerRelease\release`（已 gitignore），不污染源码树：
+
+```powershell
+powershell -NoProfile -File tools\build-release.ps1 -Version 1.0.2
 ```
 
 ## 目录结构

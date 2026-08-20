@@ -4,6 +4,9 @@ node_modules/
 # Release build workspace (separate packaging directory, caches included)
 DSHManagerRelease/
 
+# electron-builder output (CI / manual builds)
+release/
+
 # Logs and runtime artifacts
 *.log
 crash.log

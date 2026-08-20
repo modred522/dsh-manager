@@ -38,17 +38,8 @@ $pjPath = Join-Path $AppDir "package.json"
 $pj = [System.IO.File]::ReadAllText($pjPath) | ConvertFrom-Json
 $pj.author = "modred522"
 $pj.version = $Version
-$buildConfig = [ordered]@{
-    appId       = "com.modred522.dsh-manager"
-    productName = "DSH Manager"
-    asar        = $false
-    directories = [ordered]@{ output = "../release" }
-    files       = @("main.js", "preload.js", "find-dsh.ps1", "renderer/**", "assets/whale.png", "assets/app.ico", "package.json", "LICENSE")
-    win         = [ordered]@{ target = @([ordered]@{ target = "zip"; arch = @("x64") }); icon = "assets/app.ico" }
-}
-# PSCustomObject cannot take new properties by assignment; use Add-Member.
-$pj | Add-Member -NotePropertyName 'build' -NotePropertyValue $buildConfig
 # Write WITHOUT BOM (electron-rebuild JSON.parse rejects BOM).
+# Build settings live in the shared electron-builder.yml (single source of truth).
 [System.IO.File]::WriteAllText($pjPath, ($pj | ConvertTo-Json -Depth 10))
 
 Write-Host "[3/4] Installing electron + electron-builder (all caches redirected)..."
@@ -62,7 +53,10 @@ if ($LASTEXITCODE -ne 0) { Pop-Location; throw "npm install failed" }
 if ($LASTEXITCODE -ne 0) { Pop-Location; throw "electron-builder install failed" }
 
 Write-Host "[4/4] Building win-x64 zip..."
-& (Join-Path $AppDir "node_modules\.bin\electron-builder.cmd") --win zip --x64
+# Shared build config (electron-builder.yml) + local output override.
+$overridePath = Join-Path $OutDir "eb-override.yml"
+[System.IO.File]::WriteAllText($overridePath, "directories:`n  output: ../release`n")
+& (Join-Path $AppDir "node_modules\.bin\electron-builder.cmd") --win zip --x64 --config electron-builder.yml --config $overridePath
 if ($LASTEXITCODE -ne 0) { Pop-Location; throw "electron-builder failed" }
 Pop-Location
 

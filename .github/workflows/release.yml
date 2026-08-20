@@ -1,0 +1,38 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Set release metadata (version from tag)
+        shell: pwsh
+        run: |
+          $v = $env:GITHUB_REF_NAME.Substring(1)
+          npm pkg set version=$v
+          npm pkg set author=modred522
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build win-x64 zip
+        run: npx electron-builder --win zip --x64 --config electron-builder.yml
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.zip
+          generate_release_notes: true

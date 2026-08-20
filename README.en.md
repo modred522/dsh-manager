@@ -56,10 +56,17 @@ Portable zip: extract and run, no Electron dev environment needed. Node.js and t
 2. Extract it anywhere and double-click `DSH Manager.exe`
 3. Optionally create a desktop shortcut afterwards via "Overview → Tools"; the app lives in the system tray
 
-Building a release (maintainers): packaging happens in a **separate directory**, keeping the source tree clean:
+Releasing (maintainers): **push a tag to release automatically** — GitHub Actions builds the zip and creates the Release on GitHub's servers:
 
 ```powershell
-powershell -NoProfile -File tools\build-release.ps1   # output to DSHManagerRelease\release inside the repo (git-ignored)
+git tag v1.0.2
+git push origin v1.0.2
+```
+
+Local manual build (fallback): outputs to `DSHManagerRelease\release` inside the repo (git-ignored), keeping the source tree clean:
+
+```powershell
+powershell -NoProfile -File tools\build-release.ps1 -Version 1.0.2
 ```
 
 ## Project Layout
