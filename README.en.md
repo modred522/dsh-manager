@@ -1,6 +1,7 @@
 # DSH Manager
 
 [![check](https://github.com/modred522/dsh-manager/actions/workflows/check.yml/badge.svg)](https://github.com/modred522/dsh-manager/actions/workflows/check.yml)
+[![release](https://img.shields.io/github/v/release/modred522/dsh-manager)](https://github.com/modred522/dsh-manager/releases)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![electron](https://img.shields.io/badge/Electron-43.4.0-47848F.svg)](https://www.electronjs.org/)
 
@@ -38,13 +39,27 @@ An Electron desktop manager for DeepSeek Harness (dsh): tray-resident, one-click
 - **Quit**: right-click the tray icon → 退出 (closing the window only minimizes to tray).
 - **Global shortcut**: `Ctrl+Alt+D` opens DSH quickly.
 
-## Installation
+## Installation (from source)
 
 ```powershell
 npm install -g @deepseek-ai/dsh      # prerequisite: the DeepSeek Harness CLI
 git clone https://github.com/modred522/dsh-manager.git && cd dsh-manager
 npm install
 npm start
+```
+
+## Installation (Release)
+
+Portable zip: extract and run, no Electron dev environment needed. Node.js and the dsh CLI are still required on the machine (the manager uses them to start/update DSH).
+
+1. Download the latest `DSH Manager-<version>-win.zip` from [Releases](https://github.com/modred522/dsh-manager/releases)
+2. Extract it anywhere and double-click `DSH Manager.exe`
+3. Optionally create a desktop shortcut afterwards via "Overview → Tools"; the app lives in the system tray
+
+Building a release (maintainers): packaging happens in a **separate directory**, keeping the source tree clean:
+
+```powershell
+powershell -NoProfile -File tools\build-release.ps1   # output to D:\DSHManagerRelease\release
 ```
 
 ## Project Layout
@@ -57,8 +72,10 @@ dsh-manager
 ├── .github/workflows/      # CI (syntax checks on push/PR)
 ├── tools/
 │   ├── render-icon.ps1     # whale icon generator (run in STA)
+│   ├── social-preview.ps1  # GitHub social preview card generator (1280x640)
+│   ├── build-release.ps1   # package the release zip in a separate directory
 │   └── publish.ps1         # one-click publish to GitHub
-├── assets/                 # whale.png / app.ico / screenshots/
+├── assets/                 # whale.png / app.ico / social-preview.png / screenshots/
 ├── renderer/               # main window: index.html + styles.css + renderer.js
 │                           # marketplace window: market.html + market.js
 └── docs/                   # MEMORY.md (handover) / ARCHITECTURE.md / GOTCHAS.md

@@ -1,6 +1,7 @@
 # DSH 管理器
 
 [![check](https://github.com/modred522/dsh-manager/actions/workflows/check.yml/badge.svg)](https://github.com/modred522/dsh-manager/actions/workflows/check.yml)
+[![release](https://img.shields.io/github/v/release/modred522/dsh-manager)](https://github.com/modred522/dsh-manager/releases)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![electron](https://img.shields.io/badge/Electron-43.4.0-47848F.svg)](https://www.electronjs.org/)
 
@@ -38,13 +39,27 @@ DeepSeek Harness（dsh）的 Electron 桌面管理器：托盘常驻、一键启
 - **退出**：托盘图标右键 → 退出（关闭窗口只是最小化到托盘）。
 - **全局快捷键**：`Ctrl+Alt+D` 快速打开 DSH。
 
-## 全新机器安装
+## 全新机器安装（源码）
 
 ```powershell
 npm install -g @deepseek-ai/dsh      # 前置：安装 DeepSeek Harness CLI
 git clone https://github.com/modred522/dsh-manager.git && cd dsh-manager
 npm install
 npm start
+```
+
+## 安装（发行版 Release）
+
+便携版 zip：解压即用，无需搭建 Electron 开发环境。仍需要本机装有 **Node.js 与 dsh CLI**（管理器通过它们启动/更新 DSH）。
+
+1. 到 [Releases](https://github.com/modred522/dsh-manager/releases) 下载最新的 `DSH Manager-<版本>-win.zip`
+2. 解压到任意目录，双击 `DSH Manager.exe`
+3. 首次运行后可在「总览 → 工具」创建桌面快捷方式；应用托盘常驻
+
+构建发行包（维护者）：在**独立目录**打包，不污染源码树：
+
+```powershell
+powershell -NoProfile -File tools\build-release.ps1   # 输出到 D:\DSHManagerRelease\release
 ```
 
 ## 目录结构
@@ -57,8 +72,10 @@ dsh-manager
 ├── .github/workflows/      # CI（push/PR 自动语法检查）
 ├── tools/
 │   ├── render-icon.ps1     # 鲸鱼图标生成（STA 运行）
+│   ├── social-preview.ps1  # GitHub 社交预览卡生成（1280x640）
+│   ├── build-release.ps1   # 独立目录打包发行 zip
 │   └── publish.ps1         # 一键发布到 GitHub
-├── assets/                 # whale.png / app.ico / screenshots/
+├── assets/                 # whale.png / app.ico / social-preview.png / screenshots/
 ├── renderer/               # 主窗口：index.html + styles.css + renderer.js
 │                           # 插件市场独立窗口：market.html + market.js
 └── docs/                   # MEMORY.md（交接）/ ARCHITECTURE.md / GOTCHAS.md

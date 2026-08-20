@@ -27,6 +27,7 @@
 11. **插件详情整页视图 + 可拖拽分栏**：详情从 640px 弹窗改为市场窗口整页视图（返回按钮切换）；README（原始数据）左栏、评分卡 + 分析控制台右栏上下分栏，分割条拖拽调大小（pointer capture 实现），比例存 localStorage、双击复位。
 12. **市场无限滚动分页**：搜索改为 `searchMarketPage()` 游标式分页（npm `from`/`size`、GitHub `page`+`sort=stars`；每批约 20 条），渲染层滑到底部自动加载更多、底部状态条提示（"已加载全部/点击重试"）；**排序**：npm 走 registry 默认相关度（质量/维护/流行度综合分），GitHub 固定星标降序。
 13. **分析会话隔离**：headless 分析 spawn 加官方 `--patch` 层，把 `session-persistence-jsonl.root` 重定向到管理器私有目录 `%APPDATA%\DshManager\analysis-sessions\`（分析会话不再出现在 dsh web 聊天列表和用量统计）；分析结束按配置清理该目录（设置项"分析后清理分析会话"默认开）；启动时校验 dsh 版本的行 id 并清理崩溃遗留。**约定：绝不删除 `$DSH_HOME/sessions` 下的用户会话（用户自己清理）。**
+14. **发布 GitHub 公共仓库**：`https://github.com/modred522/dsh-manager`（MIT）；CI = `.github/workflows/check.yml`（push 自动 node --check）；`tools/publish.ps1` 发布、`tools/social-preview.ps1` 生成 1280x640 社交预览卡（Settings→Social preview 手动上传）、`tools/build-release.ps1` 在**独立目录** `D:\DSHManagerRelease` 打 win-x64 便携 zip（git archive 快照 + asar:false，electron-builder）；打包版快捷方式/自启不带项目目录参数（`app.isPackaged` 判断）。
 
 ## 三、当前状态
 

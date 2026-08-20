@@ -1397,10 +1397,11 @@ function createShortcut(onlyIfMissing = false) {
   try {
     const lnk = path.join(app.getPath('desktop'), 'DSH 管理器.lnk');
     if (onlyIfMissing && fs.existsSync(lnk)) return;
+    // 打包版 exe 本身就是应用，无需参数；开发模式传项目目录。
     shell.writeShortcutLink(lnk, 'replace', {
       target: process.execPath,
-      args: `"${app.getAppPath()}"`,
-      cwd: app.getAppPath(),
+      args: app.isPackaged ? '' : `"${app.getAppPath()}"`,
+      cwd: app.isPackaged ? path.dirname(process.execPath) : app.getAppPath(),
       icon: whaleIco,
       iconIndex: 0,
       description: 'DSH 管理器',
@@ -1416,7 +1417,7 @@ function applyAutoStart(enabled) {
     app.setLoginItemSettings({
       openAtLogin: enabled,
       path: process.execPath,
-      args: [`"${app.getAppPath()}"`],
+      args: app.isPackaged ? [] : [`"${app.getAppPath()}"`],
     });
   } catch {
     // 忽略。
