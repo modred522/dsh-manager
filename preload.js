@@ -1,0 +1,37 @@
+'use strict';
+
+const { contextBridge, ipcRenderer } = require('electron');
+
+contextBridge.exposeInMainWorld('dsh', {
+  getState: () => ipcRenderer.invoke('get-state'),
+  openDsh: () => ipcRenderer.invoke('open-dsh'),
+  restartDsh: () => ipcRenderer.invoke('restart-dsh'),
+  checkUpdates: (silent) => ipcRenderer.invoke('check-updates', !!silent),
+  update: () => ipcRenderer.invoke('update'),
+  rollback: () => ipcRenderer.invoke('rollback'),
+  getRecentLogs: () => ipcRenderer.invoke('get-recent-logs'),
+  stopDsh: (pids) => ipcRenderer.invoke('stop-dsh', pids || null),
+  getChangelog: (version) => ipcRenderer.invoke('get-changelog', version || null),
+  openConfigDir: () => ipcRenderer.invoke('open-config-dir'),
+  openNpmDir: () => ipcRenderer.invoke('open-npm-dir'),
+  getUsage: () => ipcRenderer.invoke('get-usage'),
+  getPlugins: () => ipcRenderer.invoke('get-plugins'),
+  installPlugin: (name) => ipcRenderer.invoke('install-plugin', name),
+  removePlugin: (name) => ipcRenderer.invoke('remove-plugin', name),
+  marketSearch: (source, query, reset) => ipcRenderer.invoke('market-search', source, query, !!reset),
+  openMarket: () => ipcRenderer.invoke('open-market'),
+  openExternal: (url) => ipcRenderer.invoke('open-external', url),
+  pluginInfo: (name) => ipcRenderer.invoke('plugin-info', name),
+  githubPluginInfo: (owner, repo) => ipcRenderer.invoke('github-plugin-info', owner, repo),
+  installGithubPlugin: (owner, repo) => ipcRenderer.invoke('install-github-plugin', owner, repo),
+  pluginAnalyze: (source, ref, force) => ipcRenderer.invoke('plugin-analyze', source, ref, !!force),
+  pluginAnalyzeStop: () => ipcRenderer.invoke('plugin-analyze-stop'),
+  analysisHistory: (source, ref) => ipcRenderer.invoke('analysis-history', source, ref),
+  onAnalyzeLog: (cb) => ipcRenderer.on('analyze-log', (_e, line) => cb(line)),
+  onAnalyzeDone: (cb) => ipcRenderer.on('analyze-done', (_e, r) => cb(r)),
+  exportLog: (text) => ipcRenderer.invoke('export-log', text),
+  createShortcut: () => ipcRenderer.invoke('create-shortcut'),
+  setConfig: (cfg) => ipcRenderer.invoke('set-config', cfg),
+  onLog: (cb) => ipcRenderer.on('log', (_e, line) => cb(line)),
+  onState: (cb) => ipcRenderer.on('state', (_e, s) => cb(s)),
+});

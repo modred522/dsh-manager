@@ -1,0 +1,14 @@
+{
+  "name": "dsh-manager",
+  "version": "1.0.0",
+  "description": "DSH (DeepSeek Harness) 桌面管理器 — Electron 版",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^43.4.0"
+  }
+}
