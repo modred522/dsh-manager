@@ -6,7 +6,7 @@
 # Usage:
 #   powershell -NoProfile -File tools\build-release.ps1                 # build v1.0.0
 #   powershell -NoProfile -File tools\build-release.ps1 -Version 1.1.0  # custom version
-#   powershell -NoProfile -File tools\build-release.ps1 -OutDir E:\Builds\DSHManager
+#   powershell -NoProfile -File tools\build-release.ps1 -OutDir <path>     # custom build dir
 
 param(
     [string]$OutDir = "",

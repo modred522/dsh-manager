@@ -1,9 +1,9 @@
 # DSH 管理器 — 架构与代码地图
 
-## 目录结构（D:\DSHManager）
+## 目录结构
 
 ```
-D:\DSHManager
+dsh-manager
 ├── main.js                  # 主进程（约 1500 行，核心逻辑全在这）
 ├── preload.js               # contextBridge 暴露 window.dsh（27 个 IPC 方法）
 ├── find-dsh.ps1             # WMI 进程详情脚本（必须纯 ASCII）

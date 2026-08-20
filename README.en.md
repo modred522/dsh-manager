@@ -59,7 +59,7 @@ Portable zip: extract and run, no Electron dev environment needed. Node.js and t
 Building a release (maintainers): packaging happens in a **separate directory**, keeping the source tree clean:
 
 ```powershell
-powershell -NoProfile -File tools\build-release.ps1   # output to D:\DSHManagerRelease\release
+powershell -NoProfile -File tools\build-release.ps1   # output to DSHManagerRelease\release inside the repo (git-ignored)
 ```
 
 ## Project Layout

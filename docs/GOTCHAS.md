@@ -27,7 +27,7 @@
 
 1. **安装 electron 的二进制下载缓存环境变量是 `electron_config_cache`**（@electron/get 读取），**不是** `ELECTRON_CACHE`。设置错会报 `EPERM: mkdir 'C:\Users\...\AppData\Local\electron'`。安装流程：设该变量 → `npm install` → 若 `node_modules\electron\dist\electron.exe` 缺失则手动 `node node_modules\electron\install.js`。
 2. **单实例锁的坑**：改了代码交付时，用户双击快捷方式只会唤醒**旧实例**（旧代码）→ "没有新功能"。交付前必须：`Get-Process electron | Stop-Process -Force`（taskkill 有时报 Access denied，Stop-Process 更稳；个别残留 crashpad_handler 可能杀不掉，占着旧目录句柄）。
-3. 未打包应用的路径约定：`process.execPath` = electron.exe；`app.getAppPath()` = 项目目录；桌面快捷方式 = `TargetPath=electron.exe` + `Arguments="D:\DSHManager"` + `Icon=assets\app.ico`。
+3. 未打包应用的路径约定：`process.execPath` = electron.exe；`app.getAppPath()` = 项目目录；桌面快捷方式 = `TargetPath=electron.exe` + `Arguments="<项目目录>"` + `Icon=assets\app.ico`。
 4. `shell.writeShortcutLink` 操作用 `'replace'`（不是 'create'，否则文件已存在会失败）。
 
 ## 四、dsh 集成坑

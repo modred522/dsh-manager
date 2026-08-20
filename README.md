@@ -59,7 +59,7 @@ npm start
 构建发行包（维护者）：在**独立目录**打包，不污染源码树：
 
 ```powershell
-powershell -NoProfile -File tools\build-release.ps1   # 输出到 D:\DSHManagerRelease\release
+powershell -NoProfile -File tools\build-release.ps1   # 输出到项目内 DSHManagerRelease\release（已 gitignore）
 ```
 
 ## 目录结构

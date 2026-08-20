@@ -22,7 +22,7 @@
 6. **Token 用量仪表盘 + 插件管理**（数据源 `session_projcache.json` 与 web profile 的 package.json）。
 7. **小优化**：更新后自动重启+回滚、日志持久化、崩溃守护、任务栏进度、托盘动态状态、深色模式+窗口记忆。
 8. **插件市场 + 一键分析**（重功能，Phase 0 实测验证后实现）。
-9. **搬迁**：项目迁到 **`D:\DSHManager`**；桌面快捷方式重定向；旧工作区管理器残留已清理。
+9. **搬迁**：项目迁到当前仓库目录（`dsh-manager`）；桌面快捷方式重定向；旧工作区管理器残留已清理。
 10. **插件市场独立窗口**：市场从插件页签迁出，改为**独立 BrowserWindow**（`renderer/market.html` + `market.js`，插件页按钮打开、重复点击聚焦）；卡片直接展示 GitHub 页面链接（npm 源无仓库信息时回退 npm 页面），点击经 `open-external` 用系统浏览器打开；`log`/`state`/`analyze-log`/`analyze-done` 事件改为 `broadcast()` 广播到主窗口+市场窗口。
 11. **插件详情整页视图 + 可拖拽分栏**：详情从 640px 弹窗改为市场窗口整页视图（返回按钮切换）；README（原始数据）左栏、评分卡 + 分析控制台右栏上下分栏，分割条拖拽调大小（pointer capture 实现），比例存 localStorage、双击复位。
 12. **市场无限滚动分页**：搜索改为 `searchMarketPage()` 游标式分页（npm `from`/`size`、GitHub `page`+`sort=stars`；每批约 20 条），渲染层滑到底部自动加载更多、底部状态条提示（"已加载全部/点击重试"）；**排序**：npm 走 registry 默认相关度（质量/维护/流行度综合分），GitHub 固定星标降序。
@@ -32,12 +32,12 @@
 
 ## 三、当前状态
 
-- **项目位置**：`D:\DSHManager`（自包含：源码 + node_modules/electron 43.4.0 + 鲸鱼 assets）。
-- **启动方式**：桌面「DSH 管理器」快捷方式（指向 `D:\DSHManager\node_modules\electron\dist\electron.exe`，参数为项目目录）；或在该目录 `npm start`。
+- **项目位置**：仓库根目录（自包含：源码 + node_modules/electron 43.4.0 + 鲸鱼 assets）。
+- **启动方式**：桌面「DSH 管理器」快捷方式（指向 `<项目根>\node_modules\electron\dist\electron.exe`，参数为项目目录）；或在该目录 `npm start`。
 - **dsh 版本**：0.1.0-rc.7（2026-08-17 发布；npm 全局安装，前缀用 `npm prefix -g` 解析）。
 - **DSH_HOME**：`~\.dsh`（默认；含凭据 `.env`、`settings.yaml`——默认模型 `deepseek-modlens / deepseek-v4-pro`、web profile 已装 `@liustack/modlens`）。
 - **配置**：`%APPDATA%\DshManager\config.json`（模式见 ARCHITECTURE.md）。
-- **图标工具**：`D:\DSHManager\tools\render-icon.ps1`（鲸鱼图标重新生成用，**必须纯 ASCII、STA 运行**）。
+- **图标工具**：`tools\render-icon.ps1`（鲸鱼图标重新生成用，**必须纯 ASCII、STA 运行**）。
 
 ## 四、关键决策与原因（不要推翻，除非有明确理由）
 
@@ -60,7 +60,7 @@
 ## 六、新会话常用操作速查
 
 - 改代码后**必须**杀旧实例再交付：`Get-Process electron | Stop-Process -Force`（单实例锁会让双击只唤醒旧代码窗口）。
-- 代码在 `D:\DSHManager`（自包含；node_modules 需 `npm install`）。
+- 代码在仓库根目录（自包含；node_modules 需 `npm install`）。
 - 语法检查：`node --check main.js`（preload.js、renderer/renderer.js、renderer/market.js 同理）。
 - 修改任何 `.ps1`：**保持纯 ASCII**（见 GOTCHAS.md）。
 - 受限环境（如 AI 沙箱）无法 GUI 实测 Electron 与 spawn 管道——不是代码问题，交付后请用户在真实环境验证。
