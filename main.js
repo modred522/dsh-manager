@@ -42,6 +42,7 @@ const DEFAULT_CONFIG = {
   // 行为
   watchdog: true, // DSH 异常退出自动重启（守护）
   cleanAnalysisSessions: true, // 插件分析结束后清理分析会话目录（不影响 dsh web 会话）
+  language: 'system', // 界面语言：'system' | 'zh' | 'en'
   theme: 'system', // 'system' | 'light' | 'dark'
   windowBounds: null, // 记忆窗口位置大小
   rollbackVersion: null, // 可回滚到的上一个版本
@@ -49,6 +50,76 @@ const DEFAULT_CONFIG = {
 
 let config = { ...DEFAULT_CONFIG };
 let npmPrefix = '';
+
+// ---------------------------------------------------------------------------
+// 主进程界面文案（托盘/通知/窗口标题；日志保持中文，属技术输出）
+// ---------------------------------------------------------------------------
+const MAIN_TEXTS = {
+  zh: {
+    appTitle: 'DSH 管理器',
+    marketTitle: 'DSH 插件市场',
+    trayOpen: '打开管理器',
+    trayOpenDsh: '打开 DSH',
+    trayRestart: '重启 DSH',
+    trayCheck: '检查更新',
+    trayShortcut: '创建桌面快捷方式',
+    trayQuit: '退出',
+    trayStop: (n) => (n > 0 ? `停止 DSH（${n} 个进程）` : '停止 DSH'),
+    trayTooltip: 'DSH 管理器（Ctrl+Alt+D 打开 DSH）',
+    trayTooltipRunning: (n) => `DSH 管理器 — DSH 运行中（${n} 个进程）`,
+    notifyUpdateTitle: 'DSH 有更新',
+    notifyUpdateBody: (v) => `发现新版本 ${v}，可一键更新。`,
+    notifyUpdatedTitle: '更新完成',
+    notifyUpdatedBody: (v) => `DSH 已更新到 ${v}`,
+    notifyRollbackTitle: '回滚完成',
+    notifyRollbackBody: (v) => `DSH 已回滚到 ${v}`,
+  },
+  en: {
+    appTitle: 'DSH Manager',
+    marketTitle: 'DSH Plugin Marketplace',
+    trayOpen: 'Open Manager',
+    trayOpenDsh: 'Open DSH',
+    trayRestart: 'Restart DSH',
+    trayCheck: 'Check for Updates',
+    trayShortcut: 'Create Desktop Shortcut',
+    trayQuit: 'Quit',
+    trayStop: (n) => (n > 0 ? `Stop DSH (${n} processes)` : 'Stop DSH'),
+    trayTooltip: 'DSH Manager (Ctrl+Alt+D opens DSH)',
+    trayTooltipRunning: (n) => `DSH Manager — DSH running (${n} processes)`,
+    notifyUpdateTitle: 'DSH Update Available',
+    notifyUpdateBody: (v) => `Version ${v} is available for one-click update.`,
+    notifyUpdatedTitle: 'Update Complete',
+    notifyUpdatedBody: (v) => `DSH has been updated to ${v}`,
+    notifyRollbackTitle: 'Rollback Complete',
+    notifyRollbackBody: (v) => `DSH has been rolled back to ${v}`,
+  },
+};
+
+function uiLang() {
+  if (config.language === 'zh' || config.language === 'en') return config.language;
+  try {
+    return String(app.getLocale() || '').toLowerCase().startsWith('zh') ? 'zh' : 'en';
+  } catch {
+    return 'en';
+  }
+}
+
+function uiText(key, ...args) {
+  const d = MAIN_TEXTS[uiLang()] || MAIN_TEXTS.zh;
+  const v = d[key] !== undefined ? d[key] : MAIN_TEXTS.zh[key];
+  if (typeof v === 'function') return v(...args);
+  return v !== undefined ? v : key;
+}
+
+function applyMainLanguage() {
+  try {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setTitle(uiText('appTitle'));
+    if (marketWindow && !marketWindow.isDestroyed()) marketWindow.setTitle(uiText('marketTitle'));
+  } catch {
+    // 忽略。
+  }
+  lastTrayKey = ''; // 强制下次 sendState 重建托盘菜单
+}
 let dshProcess = null;
 let latestVersion = null;
 let lastCheckTime = null;
@@ -1307,7 +1378,7 @@ async function checkUpdates(silent = false) {
         result.hasUpdate = true;
         log(`发现新版本 ${latest}（当前 ${current}）。`);
         result.changelog = await fetchChangelog(latest);
-        if (silent) notify('DSH 有更新', `发现新版本 ${latest}，可一键更新。`);
+        if (silent) notify(uiText('notifyUpdateTitle'), uiText('notifyUpdateBody', latest));
       } else if (!silent) {
         log(`已是最新版本（${current}）。`);
       }
@@ -1361,7 +1432,7 @@ async function update() {
     config.rollbackVersion = current;
     saveConfig();
     log('更新完成，当前版本: ' + (r.newVersion || '未知'));
-    notify('更新完成', 'DSH 已更新到 ' + (r.newVersion || '最新版本'));
+    notify(uiText('notifyUpdatedTitle'), uiText('notifyUpdatedBody', r.newVersion || '最新版本'));
     if (r.wasRunning) {
       log('之前 DSH 在运行，自动重新启动...');
       await openDsh();
@@ -1382,7 +1453,7 @@ async function rollback() {
     config.rollbackVersion = null;
     saveConfig();
     log('回滚完成，当前版本: ' + (r.newVersion || '未知'));
-    notify('回滚完成', 'DSH 已回滚到 ' + (r.newVersion || target));
+    notify(uiText('notifyRollbackTitle'), uiText('notifyRollbackBody', r.newVersion || target));
     if (r.wasRunning) {
       log('之前 DSH 在运行，自动重新启动...');
       await openDsh();
@@ -1474,8 +1545,9 @@ function createWindow() {
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#F3F5F9',
-    icon: whalePng,
-    title: 'DSH 管理器',
+    // 任务栏/Alt-Tab 图标：Windows 上建议用 ICO（PNG 只作用于标题栏）。
+    icon: whaleIco,
+    title: uiText('appTitle'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -1524,8 +1596,8 @@ function createMarketWindow() {
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#F3F5F9',
-    icon: whalePng,
-    title: 'DSH 插件市场',
+    icon: whaleIco,
+    title: uiText('marketTitle'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -1544,23 +1616,23 @@ function applyThemeSource() {
 
 function buildTrayMenu(stopLabel) {
   return Menu.buildFromTemplate([
-    { label: '打开管理器', click: () => showWindow() },
-    { label: '打开 DSH', click: () => openDsh() },
-    { label: '重启 DSH', click: () => restartDsh() },
-    { label: '检查更新', click: () => { showWindow(); checkUpdates(); } },
+    { label: uiText('trayOpen'), click: () => showWindow() },
+    { label: uiText('trayOpenDsh'), click: () => openDsh() },
+    { label: uiText('trayRestart'), click: () => restartDsh() },
+    { label: uiText('trayCheck'), click: () => { showWindow(); checkUpdates(); } },
     { label: stopLabel, click: async () => { const n = await stopDshProcesses(null); log(n > 0 ? `已停止 ${n} 个 DSH 进程。` : '没有检测到运行中的 DSH 进程。'); sendState(); } },
     { type: 'separator' },
-    { label: '创建桌面快捷方式', click: () => createShortcut(false) },
+    { label: uiText('trayShortcut'), click: () => createShortcut(false) },
     { type: 'separator' },
-    { label: '退出', click: () => { isQuitting = true; app.quit(); } },
+    { label: uiText('trayQuit'), click: () => { isQuitting = true; app.quit(); } },
   ]);
 }
 
 function createTray() {
   const icon = nativeImage.createFromPath(whalePng).resize({ width: 16, height: 16 });
   tray = new Tray(icon);
-  tray.setToolTip('DSH 管理器（Ctrl+Alt+D 打开 DSH）');
-  tray.setContextMenu(buildTrayMenu('停止 DSH'));
+  tray.setToolTip(uiText('trayTooltip'));
+  tray.setContextMenu(buildTrayMenu(uiText('trayStop', 0)));
   tray.on('double-click', () => showWindow());
 }
 
@@ -1570,8 +1642,8 @@ function updateTray(procs) {
   const count = (procs || []).length;
   if (String(count) === lastTrayKey) return;
   lastTrayKey = String(count);
-  tray.setToolTip(count > 0 ? `DSH 管理器 — DSH 运行中（${count} 个进程）` : 'DSH 管理器（Ctrl+Alt+D 打开 DSH）');
-  tray.setContextMenu(buildTrayMenu(count > 0 ? `停止 DSH（${count} 个进程）` : '停止 DSH'));
+  tray.setToolTip(count > 0 ? uiText('trayTooltipRunning', count) : uiText('trayTooltip'));
+  tray.setContextMenu(buildTrayMenu(uiText('trayStop', count)));
 }
 
 function showWindow() {
@@ -1653,6 +1725,7 @@ function setupIpc() {
     saveConfig();
     applyAutoStart(config.autoStartWithWindows);
     applyThemeSource();
+    applyMainLanguage();
     configureAutoCheckTimer();
     sendState();
   });
@@ -1668,6 +1741,8 @@ if (!gotLock) {
   app.on('second-instance', () => showWindow());
 
   app.whenReady().then(async () => {
+    // 固定 AppUserModelID：Windows 任务栏图标/通知分组的关键（缺了会显示空白图标）。
+    try { app.setAppUserModelId('com.modred522.dsh-manager'); } catch {}
     loadConfig();
     await resolveNpmPrefix();
     loadCorePackages();

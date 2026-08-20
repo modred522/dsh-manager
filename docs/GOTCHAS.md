@@ -56,3 +56,5 @@
 - [ ] `Get-Process electron | Stop-Process -Force` 杀旧实例
 - [ ] 告知用户：重启管理器后验证（沙箱里无法 GUI 实测）
 - [ ] 发布公共仓库前：确认无个人路径/密钥，node_modules 被 .gitignore 排除
+- [ ] 涉及界面文案：跑 `node tools\check-i18n.js`（i18n key 交叉核对）+ 确认新词条中英都写了
+- [ ] 涉及窗口/托盘图标：确认 `app.setAppUserModelId` 已设、BrowserWindow icon 用 ICO（Windows 任务栏用 exe 图标，PNG 只作用标题栏）

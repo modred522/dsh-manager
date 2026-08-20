@@ -621,8 +621,7 @@ header.card {
 }
 
 .log-body:empty::before {
-  content: "暂无日志";
-  color: var(--text-faint);
+  content: "";
 }
 
 /* ---------------- 弹窗 ---------------- */
@@ -1339,14 +1338,8 @@ body.dark .seg-cache { background: #3a4673; }
   word-break: break-all;
 }
 
-/* 空状态占位 */
-#analysisScore:empty::before {
-  content: "尚未分析 —— 点击右上角「分析」生成评分卡";
-  color: var(--text-faint);
-}
-
-#analysisLog:empty::before {
-  content: "分析控制台输出将显示在这里";
+/* 空状态占位由 market.js 按当前语言写入（t('scoreEmpty') / t('logEmptyHint')） */
+.pane-placeholder {
   color: var(--text-faint);
 }
 

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'" />
-  <title>DSH 管理器</title>
+  <title>DSH Manager</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -13,47 +13,47 @@
       <div class="header-left">
         <img class="logo" src="../assets/whale.png" alt="whale" />
         <div class="header-text">
-          <h1>DSH 管理器</h1>
-          <p>DeepSeek Harness 桌面管理器</p>
+          <h1 data-i18n="appName">DSH 管理器</h1>
+          <p data-i18n="appSub">DeepSeek Harness 桌面管理器</p>
         </div>
       </div>
       <div class="header-right">
-        <span id="statusText" class="status muted">未检查</span>
+        <span id="statusText" class="status muted" data-i18n="statusUnchecked">未检查</span>
       </div>
     </header>
 
     <!-- Tab 导航 -->
     <nav class="tabs">
-      <button id="tabHome" class="tab active">总览</button>
-      <button id="tabUsage" class="tab">用量</button>
-      <button id="tabPlugins" class="tab">插件</button>
+      <button id="tabHome" class="tab active" data-i18n="tabHome">总览</button>
+      <button id="tabUsage" class="tab" data-i18n="tabUsage">用量</button>
+      <button id="tabPlugins" class="tab" data-i18n="tabPlugins">插件</button>
     </nav>
 
     <!-- ================= 总览 ================= -->
     <div id="pageHome" class="tab-page">
       <section class="actions">
-        <button id="btnOpen" class="btn btn-primary">打开 DSH</button>
-        <button id="btnRestart" class="btn">重启 DSH</button>
-        <button id="btnStop" class="btn btn-danger" disabled>停止全部</button>
-        <button id="btnCheck" class="btn">检查更新</button>
-        <button id="btnUpdate" class="btn" disabled>立即更新</button>
+        <button id="btnOpen" class="btn btn-primary" data-i18n="btnOpen">打开 DSH</button>
+        <button id="btnRestart" class="btn" data-i18n="btnRestart">重启 DSH</button>
+        <button id="btnStop" class="btn btn-danger" disabled data-i18n="btnStopAll">停止全部</button>
+        <button id="btnCheck" class="btn" data-i18n="btnCheck">检查更新</button>
+        <button id="btnUpdate" class="btn" disabled data-i18n="btnUpdate">立即更新</button>
       </section>
 
       <div id="updateProgress" class="update-progress" hidden>
         <div class="progress-track"><div class="progress-fill"></div></div>
-        <span id="updateStatus">正在更新 DSH…</span>
+        <span id="updateStatus" data-i18n="updateProgress">正在更新 DSH…</span>
       </div>
 
       <section class="card info">
         <div class="info-row">
           <div class="info-item">
-            <span class="label">当前版本</span>
+            <span class="label" data-i18n="labelInstalled">当前版本</span>
             <span id="installed" class="value">…</span>
             <button id="btnRollback" class="btn btn-small rollback-btn" hidden>回滚</button>
           </div>
           <div class="divider"></div>
           <div class="info-item">
-            <span class="label">最新版本</span>
+            <span class="label" data-i18n="labelLatest">最新版本</span>
             <span id="latest" class="value">…</span>
           </div>
           <div class="spacer"></div>
@@ -61,53 +61,61 @@
         </div>
         <div class="info-row server">
           <span id="serverDot" class="dot"></span>
-          <span id="serverState" class="server-text">DSH 服务状态：检测中…</span>
-          <span id="procCount" class="proc-count">检测中…</span>
+          <span id="serverState" class="server-text" data-i18n="serverChecking">DSH 服务状态：检测中…</span>
+          <span id="procCount" class="proc-count" data-i18n="procChecking">检测中…</span>
         </div>
       </section>
 
       <section id="procsCard" class="card procs" hidden>
         <div class="procs-head">
-          <span class="procs-title">DSH 进程</span>
-          <button id="btnRefresh" class="btn btn-small">刷新</button>
+          <span class="procs-title" data-i18n="procTitle">DSH 进程</span>
+          <button id="btnRefresh" class="btn btn-small" data-i18n="btnRefresh">刷新</button>
         </div>
         <div id="procList" class="proc-list"></div>
       </section>
 
       <section class="card settings">
-        <label class="check"><input type="checkbox" id="chkAutoCheck" /> 自动检查更新</label>
-        <label class="check"><input type="checkbox" id="chkWatchdog" /> 崩溃自动重启</label>
-        <label class="check"><input type="checkbox" id="chkCleanAnalysis" /> 分析后清理分析会话</label>
-        <label class="check"><input type="checkbox" id="chkSilent" /> 启动时静默到托盘</label>
-        <label class="check"><input type="checkbox" id="chkAutoStart" /> 开机自动运行</label>
+        <label class="check"><input type="checkbox" id="chkAutoCheck" /> <span data-i18n="setAutoCheck">自动检查更新</span></label>
+        <label class="check"><input type="checkbox" id="chkWatchdog" /> <span data-i18n="setWatchdog">崩溃自动重启</span></label>
+        <label class="check"><input type="checkbox" id="chkCleanAnalysis" /> <span data-i18n="setCleanAnalysis">分析后清理分析会话</span></label>
+        <label class="check"><input type="checkbox" id="chkSilent" /> <span data-i18n="setSilent">启动时静默到托盘</span></label>
+        <label class="check"><input type="checkbox" id="chkAutoStart" /> <span data-i18n="setAutoStart">开机自动运行</span></label>
         <div class="field">
-          <span>主题</span>
+          <span data-i18n="setTheme">主题</span>
           <select id="selTheme">
-            <option value="system">跟随系统</option>
-            <option value="light">浅色</option>
-            <option value="dark">深色</option>
+            <option value="system" data-i18n="themeSystem">跟随系统</option>
+            <option value="light" data-i18n="themeLight">浅色</option>
+            <option value="dark" data-i18n="themeDark">深色</option>
           </select>
         </div>
         <div class="field">
-          <span>DSH 地址</span>
+          <span data-i18n="setLanguage">语言</span>
+          <select id="selLang">
+            <option value="system" data-i18n="langSystem">跟随系统</option>
+            <option value="zh" data-i18n="langZh">中文</option>
+            <option value="en" data-i18n="langEn">English</option>
+          </select>
+        </div>
+        <div class="field">
+          <span data-i18n="setUrl">DSH 地址</span>
           <input type="text" id="txtUrl" spellcheck="false" />
         </div>
         <div class="field">
-          <span>检查间隔(小时)</span>
+          <span data-i18n="setInterval">检查间隔(小时)</span>
           <input type="number" id="txtInterval" min="1" max="720" />
         </div>
         <div class="tools">
-          <button id="btnConfigDir" class="btn btn-small">配置目录</button>
-          <button id="btnNpmDir" class="btn btn-small">安装目录</button>
-          <button id="btnExportLog" class="btn btn-small">导出日志</button>
-          <button id="btnAbout" class="btn btn-small">关于</button>
+          <button id="btnConfigDir" class="btn btn-small" data-i18n="btnConfigDir">配置目录</button>
+          <button id="btnNpmDir" class="btn btn-small" data-i18n="btnNpmDir">安装目录</button>
+          <button id="btnExportLog" class="btn btn-small" data-i18n="btnExportLog">导出日志</button>
+          <button id="btnAbout" class="btn btn-small" data-i18n="btnAbout">关于</button>
         </div>
       </section>
 
       <section class="card log-card">
         <div class="log-head">
-          <span>日志</span>
-          <button id="btnClearLog" class="btn btn-small">清空日志</button>
+          <span data-i18n="logTitle">日志</span>
+          <button id="btnClearLog" class="btn btn-small" data-i18n="btnClearLog">清空日志</button>
         </div>
         <div id="log" class="log-body"></div>
       </section>
@@ -116,48 +124,48 @@
     <!-- ================= 用量 ================= -->
     <div id="pageUsage" class="tab-page scrollable" hidden>
       <section class="usage-stats">
-        <div class="stat-card"><span class="stat-label">总会话数</span><span id="statSessions" class="stat-value">–</span></div>
-        <div class="stat-card"><span class="stat-label">输出 tokens</span><span id="statOutput" class="stat-value">–</span></div>
-        <div class="stat-card"><span class="stat-label">输入 tokens（未缓存）</span><span id="statInput" class="stat-value">–</span></div>
-        <div class="stat-card"><span class="stat-label">缓存读取 tokens</span><span id="statCache" class="stat-value">–</span></div>
-        <div class="stat-card accent"><span class="stat-label">估算费用（元）</span><span id="statCost" class="stat-value">–</span></div>
+        <div class="stat-card"><span class="stat-label" data-i18n="statSessions">总会话数</span><span id="statSessions" class="stat-value">–</span></div>
+        <div class="stat-card"><span class="stat-label" data-i18n="statOutput">输出 tokens</span><span id="statOutput" class="stat-value">–</span></div>
+        <div class="stat-card"><span class="stat-label" data-i18n="statInput">输入 tokens（未缓存）</span><span id="statInput" class="stat-value">–</span></div>
+        <div class="stat-card"><span class="stat-label" data-i18n="statCache">缓存读取 tokens</span><span id="statCache" class="stat-value">–</span></div>
+        <div class="stat-card accent"><span class="stat-label" data-i18n="statCost">估算费用（元）</span><span id="statCost" class="stat-value">–</span></div>
       </section>
 
       <section class="card">
         <div class="panel-head">
-          <span class="panel-title">按项目用量</span>
-          <button id="btnUsageRefresh" class="btn btn-small">刷新</button>
+          <span class="panel-title" data-i18n="projTitle">按项目用量</span>
+          <button id="btnUsageRefresh" class="btn btn-small" data-i18n="btnRefresh">刷新</button>
         </div>
         <div id="projectBars" class="project-bars"></div>
       </section>
 
       <section class="card">
         <div class="panel-head">
-          <span class="panel-title">近 14 天趋势</span>
+          <span class="panel-title" data-i18n="dailyTitle">近 14 天趋势</span>
           <span class="legend">
-            <span class="legend-item"><i class="legend-dot seg-output"></i>输出</span>
-            <span class="legend-item"><i class="legend-dot seg-input"></i>输入</span>
-            <span class="legend-item"><i class="legend-dot seg-cache"></i>缓存读取</span>
+            <span class="legend-item"><i class="legend-dot seg-output"></i><span data-i18n="legendOutput">输出</span></span>
+            <span class="legend-item"><i class="legend-dot seg-input"></i><span data-i18n="legendInput">输入</span></span>
+            <span class="legend-item"><i class="legend-dot seg-cache"></i><span data-i18n="legendCache">缓存读取</span></span>
           </span>
         </div>
         <div id="dailyChart" class="daily-chart"></div>
       </section>
 
       <section class="card price-settings">
-        <span class="panel-title">费用单价（元 / 百万 tokens）</span>
+        <span class="panel-title" data-i18n="priceTitle">费用单价（元 / 百万 tokens）</span>
         <div class="field">
-          <span>输入</span>
+          <span data-i18n="priceInput">输入</span>
           <input type="number" id="priceInput" min="0" step="0.1" />
         </div>
         <div class="field">
-          <span>缓存命中</span>
+          <span data-i18n="priceCache">缓存命中</span>
           <input type="number" id="priceCache" min="0" step="0.1" />
         </div>
         <div class="field">
-          <span>输出</span>
+          <span data-i18n="priceOutput">输出</span>
           <input type="number" id="priceOutput" min="0" step="0.1" />
         </div>
-        <span class="price-note">按 DeepSeek 官网最新标价自行调整（当前为峰谷定价，此值为估算）</span>
+        <span class="price-note" data-i18n="priceNote">按 DeepSeek 官网最新标价自行调整（当前为峰谷定价，此值为估算）</span>
       </section>
     </div>
 
@@ -165,27 +173,27 @@
     <div id="pagePlugins" class="tab-page scrollable" hidden>
       <section class="card market-entry">
         <div class="market-entry-info">
-          <span class="panel-title">插件市场</span>
-          <span class="panel-sub">npm / GitHub 双源搜索 · 详情 · 一键分析（独立窗口）</span>
+          <span class="panel-title" data-i18n="marketEntryTitle">插件市场</span>
+          <span class="panel-sub" data-i18n="marketEntrySub">npm / GitHub 双源搜索 · 详情 · 一键分析（独立窗口）</span>
         </div>
-        <button id="btnMarketOpen" class="btn btn-primary">打开插件市场</button>
+        <button id="btnMarketOpen" class="btn btn-primary" data-i18n="btnOpenMarket">打开插件市场</button>
       </section>
 
       <section class="card">
         <div class="panel-head">
-          <span class="panel-title">快速安装（npm）</span>
-          <span class="panel-sub">web profile（重启 DSH 后生效）</span>
+          <span class="panel-title" data-i18n="quickInstallTitle">快速安装（npm）</span>
+          <span class="panel-sub" data-i18n="quickInstallSub">web profile（重启 DSH 后生效）</span>
         </div>
         <div class="install-row">
-          <input type="text" id="pluginName" placeholder="npm 包名，如 @liustack/modlens" spellcheck="false" />
-          <button id="btnInstallPlugin" class="btn btn-primary">安装</button>
+          <input type="text" id="pluginName" placeholder="npm 包名，如 @liustack/modlens" data-i18n-ph="pluginNamePh" spellcheck="false" />
+          <button id="btnInstallPlugin" class="btn btn-primary" data-i18n="btnInstall">安装</button>
         </div>
       </section>
 
       <section class="card">
         <div class="panel-head">
-          <span class="panel-title">已安装插件</span>
-          <button id="btnPluginsRefresh" class="btn btn-small">刷新</button>
+          <span class="panel-title" data-i18n="installedTitle">已安装插件</span>
+          <button id="btnPluginsRefresh" class="btn btn-small" data-i18n="btnRefresh">刷新</button>
         </div>
         <div id="pluginList" class="plugin-list"></div>
       </section>
@@ -196,14 +204,14 @@
   <div id="modalUpdate" class="modal-overlay" hidden>
     <div class="modal">
       <div class="modal-head">
-        <h2>发现新版本 <span id="updateVersion" class="accent-text"></span></h2>
+        <h2><span data-i18n="updateModalTitle">发现新版本</span> <span id="updateVersion" class="accent-text"></span></h2>
         <button id="modalUpdateClose" class="modal-close">×</button>
       </div>
-      <div class="modal-sub">更新内容（来自官方 Release）</div>
+      <div class="modal-sub" data-i18n="updateModalSub">更新内容（来自官方 Release）</div>
       <div id="changelog" class="changelog"></div>
       <div class="modal-foot">
-        <button id="btnUpdateNow" class="btn btn-primary">立即更新</button>
-        <button id="btnUpdateLater" class="btn">稍后再说</button>
+        <button id="btnUpdateNow" class="btn btn-primary" data-i18n="btnUpdateNow">立即更新</button>
+        <button id="btnUpdateLater" class="btn" data-i18n="btnUpdateLater">稍后再说</button>
       </div>
     </div>
   </div>
@@ -212,13 +220,13 @@
   <div id="modalAbout" class="modal-overlay" hidden>
     <div class="modal modal-narrow">
       <div class="modal-head">
-        <h2>关于 DSH 管理器</h2>
+        <h2 data-i18n="aboutTitle">关于 DSH 管理器</h2>
         <button id="btnAboutClose" class="modal-close">×</button>
       </div>
       <div class="about-body" id="aboutBody"></div>
-      <div class="about-tip">全局快捷键 Ctrl+Alt+D：快速打开 DSH</div>
+      <div class="about-tip" data-i18n="aboutTip">全局快捷键 Ctrl+Alt+D：快速打开 DSH</div>
       <div class="modal-foot">
-        <button id="btnAboutOk" class="btn btn-primary">知道了</button>
+        <button id="btnAboutOk" class="btn btn-primary" data-i18n="btnOk">知道了</button>
       </div>
     </div>
   </div>
@@ -226,6 +234,7 @@
   <!-- Toast 容器 -->
   <div id="toasts" class="toasts"></div>
 
+  <script src="i18n.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

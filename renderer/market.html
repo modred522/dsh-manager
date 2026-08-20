@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'" />
-  <title>DSH 插件市场</title>
+  <title>DSH Plugin Marketplace</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -13,8 +13,8 @@
       <div class="header-left">
         <img class="logo" src="../assets/whale.png" alt="whale" />
         <div class="header-text">
-          <h1>插件市场</h1>
-          <p>npm / GitHub 双源搜索 · 详情 · 一键分析</p>
+          <h1 data-i18n="marketTitle">插件市场</h1>
+          <p data-i18n="marketSub">npm / GitHub 双源搜索 · 详情 · 一键分析</p>
         </div>
       </div>
       <div class="market-src">
@@ -25,8 +25,8 @@
 
     <!-- 搜索栏 -->
     <div class="install-row market-search-row">
-      <input type="text" id="marketQuery" placeholder="搜索 dsh 插件（留空看热门）" spellcheck="false" />
-      <button id="btnMarketSearch" class="btn btn-primary">搜索</button>
+      <input type="text" id="marketQuery" placeholder="搜索 dsh 插件（留空看热门）" data-i18n-ph="searchNpmPh" spellcheck="false" />
+      <button id="btnMarketSearch" class="btn btn-primary" data-i18n="btnSearch">搜索</button>
     </div>
 
     <!-- 结果列表 -->
@@ -39,12 +39,12 @@
   <!-- ================= 插件详情视图（整页 + 可拖拽分栏） ================= -->
   <div id="viewDetail" class="market-window" hidden>
     <header class="card detail-head">
-      <button id="btnBack" class="btn btn-small">← 返回市场</button>
+      <button id="btnBack" class="btn btn-small" data-i18n="btnBack">← 返回市场</button>
       <h2 id="pluginTitle" class="detail-title">插件</h2>
       <div class="detail-actions">
-        <button id="btnPluginInstall" class="btn btn-primary">安装</button>
-        <button id="btnPluginAnalyze" class="btn">分析</button>
-        <button id="btnPluginStop" class="btn btn-danger" hidden>停止分析</button>
+        <button id="btnPluginInstall" class="btn btn-primary" data-i18n="btnInstall">安装</button>
+        <button id="btnPluginAnalyze" class="btn" data-i18n="btnAnalyze">分析</button>
+        <button id="btnPluginStop" class="btn btn-danger" hidden data-i18n="btnStopAnalyze">停止分析</button>
       </div>
     </header>
 
@@ -54,22 +54,22 @@
     <div id="detailSplit" class="detail-split">
       <!-- 左栏：README 原始数据 -->
       <div id="paneReadme" class="pane">
-        <div class="pane-title">README（原始数据）</div>
+        <div class="pane-title" data-i18n="paneReadme">README（原始数据）</div>
         <div id="pluginReadme" class="pane-body"></div>
       </div>
 
       <!-- 竖分割条 -->
-      <div id="splitV" class="splitter splitter-v" title="拖动调整宽度 · 双击复位"></div>
+      <div id="splitV" class="splitter splitter-v" title="Drag to resize · double-click to reset"></div>
 
       <!-- 右栏：评分卡 + 控制台 -->
       <div id="paneAnalysis" class="pane">
         <div id="paneScore">
-          <div class="pane-title">分析结果</div>
+          <div class="pane-title" data-i18n="paneScore">分析结果</div>
           <div id="analysisScore" class="pane-body"></div>
         </div>
-        <div id="splitH" class="splitter splitter-h" title="拖动调整高度 · 双击复位"></div>
+        <div id="splitH" class="splitter splitter-h" title="Drag to resize · double-click to reset"></div>
         <div id="paneLog">
-          <div class="pane-title">分析控制台</div>
+          <div class="pane-title" data-i18n="paneLog">分析控制台</div>
           <div id="analysisLog" class="pane-body"></div>
         </div>
       </div>
@@ -79,6 +79,7 @@
   <!-- Toast 容器 -->
   <div id="toasts" class="toasts"></div>
 
+  <script src="i18n.js"></script>
   <script src="market.js"></script>
 </body>
 </html>

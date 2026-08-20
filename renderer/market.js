@@ -36,6 +36,10 @@ const els = {
 let marketSource = 'npm';
 let busy = null;
 let currentDetail = null; // { source, ref }
+let analyzedOnce = false;
+let logPlaceholder = true;
+let lastMarketResults = [];
+let lastUiLang = '';
 
 function el(tag, cls, text) {
   const e = document.createElement(tag);
@@ -57,6 +61,12 @@ function showToast(msg, kind = 'info') {
 // ---------------- 格式化 ----------------
 function fmtTokens(n) {
   n = Number(n) || 0;
+  if (i18nLang === 'en') {
+    if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+    if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+    if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+    return n.toLocaleString('en-US');
+  }
   if (n >= 1e8) return (n / 1e8).toFixed(2) + ' 亿';
   if (n >= 1e4) return (n / 1e4).toFixed(1) + ' 万';
   return n.toLocaleString('zh-CN');
@@ -69,6 +79,36 @@ function applyTheme(theme) {
   document.body.classList.toggle('dark', !!dark);
 }
 
+// ---------------- 语言 ----------------
+function applyLanguage(cfg) {
+  const lang = resolveUiLang(cfg);
+  if (lang === lastUiLang) return;
+  lastUiLang = lang;
+  setI18nLang(lang);
+  applyI18nStatic();
+  setMarketSource(marketSource);
+  renderMarket(lastMarketResults);
+  applyBusy(busy);
+  if (currentDetail) {
+    if (!els.analysisScore.childElementCount) setScorePlaceholder();
+    if (logPlaceholder) setLogPlaceholder();
+    els.btnPluginAnalyze.textContent = analyzedOnce ? t('reanalyze') : t('btnAnalyze');
+  }
+}
+
+function setScorePlaceholder() {
+  els.analysisScore.innerHTML = '';
+  els.analysisScore.classList.add('pane-placeholder');
+  els.analysisScore.textContent = t('scoreEmpty');
+}
+
+function setLogPlaceholder() {
+  els.analysisLog.innerHTML = '';
+  els.analysisLog.classList.add('pane-placeholder');
+  els.analysisLog.textContent = t('logEmptyHint');
+  logPlaceholder = true;
+}
+
 // ---------------- busy 状态 ----------------
 function applyBusy(b) {
   busy = b;
@@ -78,8 +118,9 @@ function applyBusy(b) {
   els.btnPluginInstall.disabled = !!busy;
   els.btnPluginAnalyze.disabled = !!busy;
   els.btnPluginStop.hidden = !analyzing;
-  els.btnPluginInstall.textContent = installing ? '安装中…' : '安装';
-  els.btnPluginAnalyze.textContent = analyzing ? '分析中…' : (currentDetail ? '重新分析' : '分析');
+  els.btnPluginInstall.textContent = installing ? t('installingNow') : t('btnInstall');
+  els.btnPluginAnalyze.textContent = analyzing ? t('analyzing')
+    : (currentDetail ? (analyzedOnce ? t('reanalyze') : t('btnAnalyze')) : t('btnAnalyze'));
 }
 
 // ---------------- 可拖拽分栏 ----------------
@@ -143,11 +184,11 @@ function setMarketSource(source) {
   marketSource = source;
   els.srcNpm.classList.toggle('src-active', source === 'npm');
   els.srcGithub.classList.toggle('src-active', source === 'github');
-  els.marketQuery.placeholder = source === 'npm' ? '搜索 npm dsh 插件（留空看热门）' : '搜索 GitHub 仓库（留空看热门）';
+  els.marketQuery.placeholder = source === 'npm' ? t('searchNpmPh') : t('searchGhPh');
 }
 
 async function searchMarket() {
-  showToast(marketSource === 'npm' ? '正在搜索 npm…' : '正在搜索 GitHub…', 'info');
+  showToast(marketSource === 'npm' ? t('toastSearchingNpm') : t('toastSearchingGh'), 'info');
   await fetchMarketPage(true);
 }
 
@@ -161,7 +202,7 @@ async function fetchMarketPage(reset) {
   const reqId = ++marketReq;
   const query = els.marketQuery.value.trim();
   marketLoading = true;
-  setMarketFooter(reset ? '正在搜索…' : '正在加载更多…', true);
+  setMarketFooter(reset ? t('footerSearching') : t('footerLoadingMore'), true);
   let r;
   try {
     r = await window.dsh.marketSearch(marketSource, query, reset);
@@ -172,7 +213,7 @@ async function fetchMarketPage(reset) {
   marketLoading = false;
   if (!r) {
     marketHasMore = false;
-    setMarketFooter('加载失败（网络异常），点击重试', false);
+    setMarketFooter(t('footerFailNet'), false);
     els.marketFooter.classList.add('clickable');
     return;
   }
@@ -185,10 +226,10 @@ async function fetchMarketPage(reset) {
   marketRateLimited = marketRateLimited || !!r.rateLimited;
   updateMarketFooter();
   if (reset && r.rateLimited && (r.items || []).length) {
-    showToast('部分搜索源触发限流（GitHub 匿名接口 10 次/分钟），稍后重试可查看更多', 'warn');
+    showToast(t('toastRateLimited'), 'warn');
   }
   if (reset && !(r.items || []).length && marketRateLimited) {
-    setMarketFooter('加载失败（网络异常或触发限流），点击重试', false);
+    setMarketFooter(t('footerFailLimit'), false);
     els.marketFooter.classList.add('clickable');
   }
 }
@@ -207,14 +248,14 @@ function updateMarketFooter() {
   const n = els.marketList.querySelectorAll('.market-card').length;
   let text;
   if (marketLoading) {
-    text = '正在加载…';
+    text = t('footerLoading');
   } else if (marketHasMore) {
-    text = '继续向下滚动加载更多…';
+    text = t('footerScrollMore');
   } else if (n === 0) {
     text = '';
   } else {
-    text = `已加载全部 ${n} 个插件`;
-    if (marketRateLimited) text += '（部分源触发限流，稍后重试可查看更多）';
+    text = t('footerAllLoaded', n);
+    if (marketRateLimited) text += t('footerRateLimited');
   }
   setMarketFooter(text, marketLoading);
   els.marketFooter.classList.toggle('clickable', !marketLoading && marketHasMore);
@@ -236,10 +277,11 @@ function makeLink(url, cls, text) {
 }
 
 function renderMarket(results) {
+  lastMarketResults = results || [];
   if (!results || !results.length) {
     // 只有整页都空时才显示空态（分页追加时忽略）
     if (els.marketList.childElementCount === 0) {
-      els.marketList.append(el('div', 'plugin-empty', '没有找到相关插件'));
+      els.marketList.append(el('div', 'plugin-empty', t('marketEmpty')));
     }
     return;
   }
@@ -248,12 +290,12 @@ function renderMarket(results) {
     const head = el('div', 'market-head');
     head.append(el('span', 'market-name', marketSource === 'npm' ? p.name : p.repo));
     if (marketSource === 'npm') {
-      head.append(el('span', 'badge ' + (p.scope === 'official' ? 'badge-official' : 'badge-community'), p.scope === 'official' ? '官方' : '社区'));
+      head.append(el('span', 'badge ' + (p.scope === 'official' ? 'badge-official' : 'badge-community'), p.scope === 'official' ? t('badgeOfficial') : t('badgeCommunity')));
     } else {
-      head.append(el('span', 'badge badge-community', 'GitHub'));
+      head.append(el('span', 'badge badge-community', t('badgeGithub')));
     }
     card.append(head);
-    const desc = el('div', 'market-desc', p.description || '（无描述）');
+    const desc = el('div', 'market-desc', p.description || t('noDescription'));
     desc.title = p.description || '';
     card.append(desc);
     const meta = el('div', 'market-meta');
@@ -274,11 +316,11 @@ function renderMarket(results) {
     card.append(makeLink(url, 'market-link', url));
 
     const actions = el('div', 'market-actions');
-    const btnDetail = el('button', 'btn btn-small', '详情');
+    const btnDetail = el('button', 'btn btn-small', t('btnDetail'));
     btnDetail.addEventListener('click', () => openDetail(marketSource, marketSource === 'npm' ? p.name : p.repo, false));
-    const btnAnalyze = el('button', 'btn btn-small', '分析');
+    const btnAnalyze = el('button', 'btn btn-small', t('btnAnalyze'));
     btnAnalyze.addEventListener('click', () => openDetail(marketSource, marketSource === 'npm' ? p.name : p.repo, true));
-    const btnInstall = el('button', 'btn btn-small btn-primary', '安装');
+    const btnInstall = el('button', 'btn btn-small btn-primary', t('btnInstall'));
     btnInstall.addEventListener('click', () => installFromMarket(marketSource, marketSource === 'npm' ? p.name : p.repo));
     actions.append(btnDetail, btnAnalyze, btnInstall);
     card.append(actions);
@@ -289,29 +331,28 @@ function renderMarket(results) {
 async function installFromMarket(source, ref) {
   if (source === 'npm') {
     const r = await window.dsh.installPlugin(ref);
-    showToast(r && r.ok ? `已安装 ${ref}，重启 DSH 生效` : '安装失败，详见日志', r && r.ok ? 'ok' : 'warn');
+    showToast(r && r.ok ? t('toastInstalled', ref) : t('toastInstallFailed'), r && r.ok ? 'ok' : 'warn');
   } else {
-    const ok = window.confirm(
-      `将从 GitHub 安装 ${ref}。\n\n该插件带安装期构建脚本（prepare），安装即允许其在本机执行代码——这是供应链攻击的常见入口。\n\n请确认你信任该仓库后继续。`
-    );
+    const ok = window.confirm(t('ghInstallConfirm', ref));
     if (!ok) return;
     const parts = ref.split('/');
     const r = await window.dsh.installGithubPlugin(parts[0], parts[1]);
-    showToast(r && r.ok ? `已安装 ${ref}，重启 DSH 生效` : '安装失败，详见日志', r && r.ok ? 'ok' : 'warn');
+    showToast(r && r.ok ? t('toastInstalled', ref) : t('toastInstallFailed'), r && r.ok ? 'ok' : 'warn');
   }
 }
 
 // ---------------- 插件详情视图 ----------------
 async function openDetail(source, ref, startAnalysis) {
   currentDetail = { source, ref };
+  analyzedOnce = false;
   els.pluginTitle.textContent = ref;
   els.pluginTitle.title = ref;
   els.pluginBadges.innerHTML = '';
   els.pluginStats.innerHTML = '';
-  els.pluginReadme.textContent = '加载中…';
-  els.analysisScore.innerHTML = '';
-  els.analysisLog.innerHTML = '';
-  els.btnPluginAnalyze.textContent = '分析';
+  els.pluginReadme.textContent = t('loadingDetail');
+  setScorePlaceholder();
+  setLogPlaceholder();
+  els.btnPluginAnalyze.textContent = t('btnAnalyze');
   els.btnPluginStop.hidden = true;
   els.viewMarket.hidden = true;
   els.viewDetail.hidden = false;
@@ -326,7 +367,8 @@ async function openDetail(source, ref, startAnalysis) {
   const hist = await window.dsh.analysisHistory(source, ref);
   if (hist && hist.result && hist.result.score != null) {
     renderAnalysisResult(hist.result);
-    els.btnPluginAnalyze.textContent = '重新分析';
+    analyzedOnce = true;
+    els.btnPluginAnalyze.textContent = t('reanalyze');
   }
 
   if (startAnalysis) startAnalysisFlow(false);
@@ -334,6 +376,7 @@ async function openDetail(source, ref, startAnalysis) {
 
 function backToMarket() {
   currentDetail = null;
+  analyzedOnce = false;
   els.viewDetail.hidden = true;
   els.viewMarket.hidden = false;
   els.marketQuery.focus();
@@ -346,41 +389,41 @@ function githubUrlFrom(raw) {
 }
 
 function renderDetailNpm(info) {
-  if (!info) { els.pluginReadme.textContent = '获取详情失败（网络异常或包不存在）。'; return; }
+  if (!info) { els.pluginReadme.textContent = t('detailFailNpm'); return; }
   els.pluginTitle.textContent = `${info.name}  v${info.version}`;
   els.pluginTitle.title = `${info.name}  v${info.version}`;
-  addBadge('npm');
-  addBadge(info.license || '无许可证');
+  addBadge(t('badgeNpm'));
+  addBadge(info.license || t('badgeNoLicense'));
   addStats([
-    ['周下载', info.downloads != null ? fmtTokens(info.downloads) : '—'],
-    ['Star', info.repo ? String(info.repo.stars) : '—'],
-    ['Issues', info.repo ? String(info.repo.openIssues) : '—'],
-    ['创建', info.created || '—'],
-    ['更新', info.modified || '—'],
+    [t('statDownloads'), info.downloads != null ? fmtTokens(info.downloads) : '—'],
+    [t('statStars'), info.repo ? String(info.repo.stars) : '—'],
+    [t('statIssues'), info.repo ? String(info.repo.openIssues) : '—'],
+    [t('statCreated'), info.created || '—'],
+    [t('statUpdated'), info.modified || '—'],
   ]);
   const gh = (info.repo && info.repo.fullName)
     ? `https://github.com/${info.repo.fullName}`
     : githubUrlFrom(info.repository) || githubUrlFrom(info.homepage);
   if (gh) addPluginLink('GitHub', gh);
-  els.pluginReadme.textContent = info.readme || '（无 README）';
+  els.pluginReadme.textContent = info.readme || t('noReadme');
 }
 
 function renderDetailGithub(info) {
-  if (!info || !info.stats) { els.pluginReadme.textContent = '获取详情失败（可能被 GitHub 限流或仓库不存在）。'; return; }
+  if (!info || !info.stats) { els.pluginReadme.textContent = t('detailFailGh'); return; }
   const s = info.stats;
   els.pluginTitle.textContent = info.repo;
   els.pluginTitle.title = info.repo;
-  addBadge('GitHub');
-  addBadge(s.license || '无许可证');
+  addBadge(t('badgeGithub'));
+  addBadge(s.license || t('badgeNoLicense'));
   addStats([
-    ['Star', String(s.stars || 0)],
-    ['Fork', String(s.forks || 0)],
-    ['Issues', String(s.openIssues || 0)],
-    ['创建', s.created || '—'],
-    ['推送', s.pushed || '—'],
+    [t('statStars'), String(s.stars || 0)],
+    [t('statForks'), String(s.forks || 0)],
+    [t('statIssues'), String(s.openIssues || 0)],
+    [t('statCreated'), s.created || '—'],
+    [t('statPushed'), s.pushed || '—'],
   ]);
   addPluginLink('GitHub', `https://github.com/${info.repo}`);
-  els.pluginReadme.textContent = s.readme || '（无 README）';
+  els.pluginReadme.textContent = s.readme || t('noReadme');
 }
 
 function addBadge(text) {
@@ -402,31 +445,36 @@ function addStats(pairs) {
 async function startAnalysisFlow(force) {
   if (!currentDetail) return;
   els.analysisScore.innerHTML = '';
+  els.analysisScore.classList.remove('pane-placeholder');
   els.analysisLog.innerHTML = '';
+  els.analysisLog.classList.remove('pane-placeholder');
+  logPlaceholder = false;
   els.btnPluginAnalyze.disabled = true;
   els.btnPluginInstall.disabled = true;
   els.btnPluginStop.hidden = false;
-  els.btnPluginAnalyze.textContent = '分析中…';
+  els.btnPluginAnalyze.textContent = t('analyzing');
   await window.dsh.pluginAnalyze(currentDetail.source, currentDetail.ref, !!force);
+  analyzedOnce = true;
   els.btnPluginStop.hidden = true;
   els.btnPluginAnalyze.disabled = false;
   els.btnPluginInstall.disabled = false;
-  els.btnPluginAnalyze.textContent = '重新分析';
+  els.btnPluginAnalyze.textContent = t('reanalyze');
 }
 
 function renderAnalysisResult(r) {
   els.analysisScore.innerHTML = '';
+  els.analysisScore.classList.remove('pane-placeholder');
   const wrap = el('div', 'score-card');
   const head = el('div', 'score-head');
   head.append(
     el('div', 'score-big', r.score != null ? String(r.score) : '?'),
     el('span', 'verdict-badge verdict-' +
       (r.verdict === '真实有用' ? 'good' : r.verdict === '徒有其表' ? 'bad' : r.verdict === '一般' ? 'mid' : 'unknown'),
-      r.verdict || '未知')
+      r.verdict || t('unknown'))
   );
   wrap.append(head);
   wrap.append(el('div', 'score-summary', r.summary || ''));
-  const lists = [['优点', r.pros], ['缺点', r.cons], ['风险', r.risks]];
+  const lists = [[t('scorePros'), r.pros], [t('scoreCons'), r.cons], [t('scoreRisks'), r.risks]];
   for (const [title, items] of lists) {
     if (!items || !items.length) continue;
     const sec = el('div', 'score-section');
@@ -456,29 +504,38 @@ els.marketFooter.addEventListener('click', () => {
 });
 
 els.btnBack.addEventListener('click', backToMarket);
-els.btnPluginAnalyze.addEventListener('click', () => startAnalysisFlow(els.btnPluginAnalyze.textContent === '重新分析'));
+els.btnPluginAnalyze.addEventListener('click', () => startAnalysisFlow(analyzedOnce));
 els.btnPluginStop.addEventListener('click', () => window.dsh.pluginAnalyzeStop());
 els.btnPluginInstall.addEventListener('click', () => {
   if (currentDetail) installFromMarket(currentDetail.source, currentDetail.ref);
 });
 
 window.dsh.onAnalyzeLog((line) => {
+  if (logPlaceholder) {
+    els.analysisLog.innerHTML = '';
+    els.analysisLog.classList.remove('pane-placeholder');
+    logPlaceholder = false;
+  }
   const div = el('div', 'log-line', line);
   els.analysisLog.appendChild(div);
   while (els.analysisLog.childElementCount > 500) els.analysisLog.removeChild(els.analysisLog.firstChild);
   els.analysisLog.scrollTop = els.analysisLog.scrollHeight;
 });
 window.dsh.onAnalyzeDone((r) => {
+  analyzedOnce = true;
   renderAnalysisResult(r);
   els.btnPluginStop.hidden = true;
   els.btnPluginAnalyze.disabled = false;
   els.btnPluginInstall.disabled = false;
-  els.btnPluginAnalyze.textContent = '重新分析';
+  els.btnPluginAnalyze.textContent = t('reanalyze');
 });
 
 window.dsh.onState((s) => {
   applyBusy(s.busy);
-  if (s.config) applyTheme(s.config.theme);
+  if (s.config) {
+    applyTheme(s.config.theme);
+    applyLanguage(s.config);
+  }
 });
 
 // ---------------- 初始化 ----------------
@@ -493,7 +550,10 @@ bindSplitter(els.splitH, els.paneAnalysis, false,
 
 window.dsh.getState().then((s) => {
   applyBusy(s.busy);
-  if (s.config) applyTheme(s.config.theme);
+  if (s.config) {
+    applyTheme(s.config.theme);
+    applyLanguage(s.config);
+  }
 });
 searchMarket();
 els.marketQuery.focus();

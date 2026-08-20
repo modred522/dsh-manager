@@ -1,6 +1,9 @@
 # Dependencies
 node_modules/
 
+# Release build workspace (separate packaging directory, caches included)
+DSHManagerRelease/
+
 # Logs and runtime artifacts
 *.log
 crash.log

@@ -1,5 +1,6 @@
 # build-release.ps1 - package a portable win-x64 zip release in a SEPARATE
-# directory (default D:\DSHManagerRelease). The source tree stays untouched.
+# directory INSIDE the project (default <project root>\DSHManagerRelease, which
+# is git-ignored). The source tree itself stays untouched.
 # Pure ASCII: PowerShell 5.1 reads no-BOM files as ANSI.
 #
 # Usage:
@@ -8,12 +9,13 @@
 #   powershell -NoProfile -File tools\build-release.ps1 -OutDir E:\Builds\DSHManager
 
 param(
-    [string]$OutDir = "D:\DSHManagerRelease",
+    [string]$OutDir = "",
     [string]$Version = "1.0.0"
 )
 
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path $PSScriptRoot -Parent
+if ($OutDir -eq "") { $OutDir = Join-Path $Root "DSHManagerRelease" }
 
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw "git not found. Install Git for Windows first." }
 if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { throw "npm not found." }

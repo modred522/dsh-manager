@@ -26,6 +26,7 @@ const els = {
   chkCleanAnalysis: $('chkCleanAnalysis'),
   chkSilent: $('chkSilent'),
   selTheme: $('selTheme'),
+  selLang: $('selLang'),
   btnRollback: $('btnRollback'),
   txtUrl: $('txtUrl'),
   txtInterval: $('txtInterval'),
@@ -76,6 +77,8 @@ let installedVersion = null;
 let lastCount = -1;
 let lastConfig = null;
 let activeTab = 'home';
+let rollbackTarget = null;
+let lastUiLang = '';
 
 function el(tag, cls, text) {
   const e = document.createElement(tag);
@@ -105,6 +108,12 @@ function showToast(msg, kind = 'info') {
 // ---------------- 格式化 ----------------
 function fmtTokens(n) {
   n = Number(n) || 0;
+  if (i18nLang === 'en') {
+    if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+    if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+    if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+    return n.toLocaleString('en-US');
+  }
   if (n >= 1e8) return (n / 1e8).toFixed(2) + ' 亿';
   if (n >= 1e4) return (n / 1e4).toFixed(1) + ' 万';
   return n.toLocaleString('zh-CN');
@@ -133,7 +142,7 @@ function setButtonLoading(btn, loading, loadingText, normalText) {
 }
 
 function updateProcCount(n) {
-  els.procCount.textContent = n > 0 ? `检测到 ${n} 个 DSH 进程` : '未检测到 DSH 进程';
+  els.procCount.textContent = t('procCount', n);
   if (n !== lastCount) {
     lastCount = n;
     els.procCount.classList.remove('pop');
@@ -149,9 +158,9 @@ function renderProcesses(procs) {
   els.procsCard.hidden = list.length === 0;
   for (const p of list) {
     const row = el('div', 'proc-row');
-    const cmd = el('span', 'proc-cmd', p.commandLine || '（未获取到命令行）');
+    const cmd = el('span', 'proc-cmd', p.commandLine || t('procNoCmd'));
     if (p.commandLine) cmd.title = p.commandLine;
-    const stopBtn = el('button', 'btn btn-small btn-danger', '停止');
+    const stopBtn = el('button', 'btn btn-small btn-danger', t('procStop'));
     stopBtn.addEventListener('click', () => stopOne(p.pid));
     const resText = [];
     if (p.memMb) resText.push(p.memMb + ' MB');
@@ -170,12 +179,12 @@ function renderProcesses(procs) {
 
 async function stopOne(pid) {
   const n = await window.dsh.stopDsh([pid]);
-  showToast(n > 0 ? `已停止进程 ${pid}` : `进程 ${pid} 已不存在`, n > 0 ? 'warn' : 'muted');
+  showToast(n > 0 ? t('toastStoppedProc', pid) : t('toastProcGone', pid), n > 0 ? 'warn' : 'muted');
 }
 
 async function stopAll() {
   const n = await window.dsh.stopDsh();
-  showToast(n > 0 ? `已停止 ${n} 个 DSH 进程` : '没有运行中的 DSH 进程', n > 0 ? 'warn' : 'muted');
+  showToast(n > 0 ? t('toastStoppedAll', n) : t('toastNoProcs'), n > 0 ? 'warn' : 'muted');
 }
 
 // ---------------- 状态渲染 ----------------
@@ -185,32 +194,35 @@ function renderState(s) {
   busy = s.busy;
   lastConfig = s.config;
 
-  els.installed.textContent = s.installedVersion || '未知';
+  els.installed.textContent = s.installedVersion || t('unknown');
   els.latest.textContent = s.latestVersion || '…';
-  els.lastCheck.textContent = s.lastCheckTime ? `上次检查 ${fmtTime(s.lastCheckTime)}` : '';
+  els.lastCheck.textContent = s.lastCheckTime ? `${t('lastChecked', fmtTime(s.lastCheckTime))}` : '';
 
   els.serverDot.className = 'dot' + (s.serverUp ? ' up' : '');
   els.serverState.textContent = s.serverUp
-    ? `DSH 服务状态：运行中（${s.dshUrl}）`
-    : `DSH 服务状态：未运行（${s.dshUrl}）`;
+    ? t('serverUp', s.dshUrl)
+    : t('serverDown', s.dshUrl);
 
   updateProcCount((s.dshProcesses || []).length);
   renderProcesses(s.dshProcesses || []);
 
   if (s.installedVersion && s.latestVersion) {
     const hasUpdate = compareVersions(s.latestVersion, s.installedVersion) > 0;
-    setStatus(hasUpdate ? '发现新版本' : '已是最新', hasUpdate ? 'warn' : 'ok');
+    setStatus(hasUpdate ? t('statusUpdate') : t('statusLatest'), hasUpdate ? 'warn' : 'ok');
   } else {
-    setStatus('未检查', 'muted');
+    setStatus(t('statusUnchecked'), 'muted');
   }
 
   applyTheme(s.config && s.config.theme);
+  applyLanguage(s.config);
 
   if (s.rollbackVersion) {
+    rollbackTarget = s.rollbackVersion;
     els.btnRollback.hidden = false;
-    els.btnRollback.title = '回滚到 v' + s.rollbackVersion;
-    els.btnRollback.textContent = '回滚 v' + s.rollbackVersion;
+    els.btnRollback.title = t('rollback', s.rollbackVersion);
+    els.btnRollback.textContent = t('rollback', s.rollbackVersion);
   } else {
+    rollbackTarget = null;
     els.btnRollback.hidden = true;
   }
 
@@ -224,13 +236,13 @@ function renderState(s) {
   els.btnUpdate.disabled = !!busy || !canUpdate;
   els.btnStop.disabled = !!busy || !canStop;
 
-  setButtonLoading(els.btnCheck, busy === 'check', '检查中…', '检查更新');
-  setButtonLoading(els.btnUpdate, busy === 'update', '更新中…', '立即更新');
-  setButtonLoading(els.btnInstallPlugin, busy === 'plugin', '安装中…', '安装');
+  setButtonLoading(els.btnCheck, busy === 'check', t('checkingNow'), t('btnCheck'));
+  setButtonLoading(els.btnUpdate, busy === 'update', t('updatingNow'), t('btnUpdate'));
+  setButtonLoading(els.btnInstallPlugin, busy === 'plugin', t('installingNow'), t('btnInstall'));
   els.btnInstallPlugin.disabled = !!busy;
 
   els.updateProgress.hidden = busy !== 'update';
-  if (busy === 'update') els.updateStatus.textContent = '正在更新 DSH…（详情见日志）';
+  if (busy === 'update') els.updateStatus.textContent = t('updateProgressDetail');
 }
 
 function compareVersions(a, b) {
@@ -273,7 +285,7 @@ function renderUsage(usage, cfg) {
   const maxProj = Math.max(1, ...projects.map((p) => p.output + p.uncachedInput + p.cacheRead));
   els.projectBars.innerHTML = '';
   if (!projects.length) {
-    els.projectBars.append(el('div', 'plugin-empty', '暂无会话数据'));
+    els.projectBars.append(el('div', 'plugin-empty', t('projEmpty')));
   }
   for (const p of projects) {
     const row = el('div', 'project-row');
@@ -284,7 +296,7 @@ function renderUsage(usage, cfg) {
     fill.style.width = Math.max(2, ((p.output + p.uncachedInput + p.cacheRead) / maxProj) * 100) + '%';
     track.append(fill);
     const val = el('span', 'project-val',
-      `输出 ${fmtTokens(p.output)} · 共 ${fmtTokens(p.output + p.uncachedInput + p.cacheRead)} · ${p.sessions} 会话`);
+      t('projVal', fmtTokens(p.output), fmtTokens(p.output + p.uncachedInput + p.cacheRead), p.sessions));
     row.append(name, track, val);
     els.projectBars.appendChild(row);
   }
@@ -307,7 +319,7 @@ function renderUsage(usage, cfg) {
       bar.appendChild(seg);
     }
     const label = el('div', 'day-label', (d.day || '').slice(5));
-    label.title = `${d.day}  输出 ${fmtTokens(d.output)} · 输入 ${fmtTokens(d.uncachedInput)} · 缓存 ${fmtTokens(d.cacheRead)}`;
+    label.title = t('dayTip', d.day, fmtTokens(d.output), fmtTokens(d.uncachedInput), fmtTokens(d.cacheRead));
     col.append(bar, label);
     els.dailyChart.appendChild(col);
   }
@@ -327,13 +339,13 @@ async function loadUsage() {
 function renderPlugins(plugins) {
   els.pluginList.innerHTML = '';
   if (!plugins || !plugins.length) {
-    els.pluginList.append(el('div', 'plugin-empty', '暂无已安装插件'));
+    els.pluginList.append(el('div', 'plugin-empty', t('installedEmpty')));
     return;
   }
   for (const p of plugins) {
     const row = el('div', 'plugin-row');
     row.append(el('span', 'plugin-name', p.name), el('span', 'plugin-ver', 'v' + p.version));
-    const b = el('button', 'btn btn-small btn-danger', '卸载');
+    const b = el('button', 'btn btn-small btn-danger', t('btnUninstall'));
     b.addEventListener('click', () => removeOne(p.name));
     row.append(b);
     els.pluginList.appendChild(row);
@@ -347,7 +359,7 @@ async function loadPlugins() {
 
 async function removeOne(name) {
   const r = await window.dsh.removePlugin(name);
-  showToast(r && r.ok ? `已卸载 ${name}，重启 DSH 生效` : '卸载失败，详见日志', r && r.ok ? 'warn' : 'muted');
+  showToast(r && r.ok ? t('toastUninstalled', name) : t('toastUninstallFailed'), r && r.ok ? 'warn' : 'muted');
   loadPlugins();
 }
 
@@ -372,6 +384,7 @@ function loadConfigIntoForm(cfg) {
   els.chkCleanAnalysis.checked = cfg.cleanAnalysisSessions !== false;
   els.chkSilent.checked = !!cfg.minimizeToTrayOnStartup;
   els.selTheme.value = cfg.theme || 'system';
+  els.selLang.value = cfg.language || 'system';
   els.txtUrl.value = cfg.dshUrl;
   els.txtInterval.value = cfg.autoCheckIntervalHours;
   els.priceInput.value = cfg.costInput;
@@ -389,6 +402,7 @@ function collectConfig() {
     cleanAnalysisSessions: els.chkCleanAnalysis.checked,
     minimizeToTrayOnStartup: els.chkSilent.checked,
     theme: els.selTheme.value || 'system',
+    language: els.selLang.value || 'system',
     costInput: Math.max(0, Number(els.priceInput.value) || 0),
     costCache: Math.max(0, Number(els.priceCache.value) || 0),
     costOutput: Math.max(0, Number(els.priceOutput.value) || 0),
@@ -402,6 +416,18 @@ function applyTheme(theme) {
   document.body.classList.toggle('dark', !!dark);
 }
 
+// ---------------- 语言 ----------------
+function applyLanguage(cfg) {
+  const lang = resolveUiLang(cfg);
+  if (lang === lastUiLang) return;
+  lastUiLang = lang;
+  setI18nLang(lang);
+  applyI18nStatic();
+  // 重建动态区域（渲染层按当前语言重新生成）
+  switchTab(activeTab);
+  window.dsh.getState().then(renderState);
+}
+
 function saveConfig() {
   window.dsh.setConfig(collectConfig());
 }
@@ -409,7 +435,7 @@ function saveConfig() {
 // ---------------- 弹窗 ----------------
 function showUpdateModal(latest, text) {
   els.updateVersion.textContent = 'v' + latest;
-  els.changelog.textContent = text || '（未获取到更新说明）';
+  els.changelog.textContent = text || t('changelogEmpty');
   els.modalUpdate.hidden = false;
 }
 
@@ -421,11 +447,11 @@ function showAbout(s) {
   els.aboutBody.innerHTML = '';
   const info = s.appInfo || {};
   const rows = [
-    ['管理器版本', info.appVersion],
-    ['DSH 版本', s.installedVersion],
-    ['Electron', info.electronVersion],
-    ['Node.js', info.nodeVersion],
-    ['Chromium', info.chromeVersion],
+    [t('aboutAppVersion'), info.appVersion],
+    [t('aboutDshVersion'), s.installedVersion],
+    [t('aboutElectron'), info.electronVersion],
+    [t('aboutNode'), info.nodeVersion],
+    [t('aboutChromium'), info.chromeVersion],
   ];
   for (const [k, v] of rows) {
     const r = el('div', 'about-row');
@@ -442,25 +468,25 @@ function hideAbout() {
 // ---------------- 事件绑定 ----------------
 els.btnOpen.addEventListener('click', () => window.dsh.openDsh());
 els.btnRestart.addEventListener('click', async () => {
-  showToast('正在重启 DSH…', 'info');
+  showToast(t('toastRestarting'), 'info');
   await window.dsh.restartDsh();
 });
 els.btnStop.addEventListener('click', stopAll);
 els.btnCheck.addEventListener('click', async () => {
   const res = await window.dsh.checkUpdates(false);
   if (res && res.hasUpdate) showUpdateModal(res.latest, res.changelog);
-  else if (res && res.latest) showToast('已是最新版本', 'ok');
-  else showToast('检查失败，详见日志', 'warn');
+  else if (res && res.latest) showToast(t('toastLatest'), 'ok');
+  else showToast(t('toastCheckFailed'), 'warn');
 });
 els.btnUpdate.addEventListener('click', async () => {
   const info = await window.dsh.getChangelog();
   if (info && latestVersion) showUpdateModal(latestVersion, info);
-  else showToast('暂无可用更新', 'muted');
+  else showToast(t('toastNoUpdate'), 'muted');
 });
 els.btnUpdateNow.addEventListener('click', async () => {
   hideUpdateModal();
   const r = await window.dsh.update();
-  showToast(r && r.ok ? '更新完成' : '更新结束，详见日志', r && r.ok ? 'ok' : 'warn');
+  showToast(r && r.ok ? t('toastUpdated') : t('toastUpdateEnded'), r && r.ok ? 'ok' : 'warn');
 });
 els.btnUpdateLater.addEventListener('click', hideUpdateModal);
 els.modalUpdateClose.addEventListener('click', hideUpdateModal);
@@ -473,8 +499,8 @@ els.btnNpmDir.addEventListener('click', () => window.dsh.openNpmDir());
 els.btnExportLog.addEventListener('click', async () => {
   const text = [...els.log.children].map((d) => d.textContent).join('\n');
   const res = await window.dsh.exportLog(text);
-  if (res && res.ok) showToast('日志已导出', 'ok');
-  else showToast('导出已取消或失败', 'muted');
+  if (res && res.ok) showToast(t('toastLogExported'), 'ok');
+  else showToast(t('toastExportFailed'), 'muted');
 });
 els.btnAbout.addEventListener('click', () => window.dsh.getState().then(showAbout));
 els.btnAboutClose.addEventListener('click', hideAbout);
@@ -489,6 +515,14 @@ els.chkWatchdog.addEventListener('change', saveConfig);
 els.chkCleanAnalysis.addEventListener('change', saveConfig);
 els.chkSilent.addEventListener('change', saveConfig);
 els.selTheme.addEventListener('change', () => { saveConfig(); applyTheme(els.selTheme.value); });
+els.selLang.addEventListener('change', () => {
+  saveConfig();
+  const lang = resolveUiLang({ language: els.selLang.value });
+  if (lang !== lastUiLang) {
+    lastUiLang = '';
+    applyLanguage({ language: els.selLang.value });
+  }
+});
 els.txtUrl.addEventListener('change', saveConfig);
 els.txtInterval.addEventListener('change', saveConfig);
 els.priceInput.addEventListener('change', () => { saveConfig(); refreshCost(); });
@@ -496,10 +530,11 @@ els.priceCache.addEventListener('change', () => { saveConfig(); refreshCost(); }
 els.priceOutput.addEventListener('change', () => { saveConfig(); refreshCost(); });
 
 els.btnRollback.addEventListener('click', async () => {
-  const target = els.btnRollback.title.replace('回滚到 v', '');
-  if (!window.confirm(`确定回滚到 v${target}？\n将执行 npm install -g @deepseek-ai/dsh@${target}`)) return;
+  if (!rollbackTarget) return;
+  const target = rollbackTarget;
+  if (!window.confirm(t('rollbackConfirm', target))) return;
   const r = await window.dsh.rollback();
-  showToast(r && r.ok ? `已回滚到 ${r.newVersion || target}` : '回滚失败，详见日志', r && r.ok ? 'ok' : 'warn');
+  showToast(r && r.ok ? t('toastRolledBack', r.newVersion || target) : t('toastRollbackFailed'), r && r.ok ? 'ok' : 'warn');
 });
 
 // 系统主题变化（跟随系统时）
@@ -519,9 +554,9 @@ els.btnMarketOpen.addEventListener('click', () => window.dsh.openMarket());
 // 快速安装（npm）
 els.btnInstallPlugin.addEventListener('click', async () => {
   const name = els.pluginName.value.trim();
-  if (!name) { showToast('请输入插件包名', 'warn'); return; }
+  if (!name) { showToast(t('toastPluginNameNeeded'), 'warn'); return; }
   const r = await window.dsh.installPlugin(name);
-  showToast(r && r.ok ? `已安装 ${name}，重启 DSH 生效` : '安装失败，详见日志', r && r.ok ? 'ok' : 'warn');
+  showToast(r && r.ok ? t('toastInstalled', name) : t('toastInstallFailed'), r && r.ok ? 'ok' : 'warn');
   if (r && r.ok) els.pluginName.value = '';
   loadPlugins();
 });
