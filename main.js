@@ -258,13 +258,10 @@ function loadCorePackages() {
   }
 }
 
-function getLatestVersion() {
+function latestVersionFor(pkgName) {
   return new Promise((resolve) => {
     try {
-      // 注意：不能只读 `npm view <pkg> version`（= latest 标签）。
-      // dsh 的 rc 预发行版惯例挂在 `next` 标签上（如 rc.8 在 next、rc.7 在 latest），
-      // 只读 latest 会把 rc.8 漏掉。这里取所有 dist-tags 中的最高版本。
-      exec('npm view @deepseek-ai/dsh dist-tags --json', { windowsHide: true, timeout: 60000 }, (_err, stdout) => {
+      exec(`npm view ${pkgName} dist-tags --json`, { windowsHide: true, timeout: 60000 }, (_err, stdout) => {
         try {
           const tags = JSON.parse(stdout || '{}');
           let best = null;
@@ -282,6 +279,11 @@ function getLatestVersion() {
       resolve(null);
     }
   });
+}
+
+function getLatestVersion() {
+  // dsh 的 rc 预发行版惯例挂在 `next` 标签上，只读 latest 会漏报；取所有 dist-tags 最高版本。
+  return latestVersionFor('@deepseek-ai/dsh');
 }
 
 function compareVersions(a, b) {
@@ -744,6 +746,44 @@ async function removePlugin(name) {
   sendState();
   if (code === 0) log(`插件 ${pkgName} 卸载完成，重启 DSH 后生效。`);
   else log(`插件 ${pkgName} 卸载失败（退出码 ${code}），见上方日志。`);
+  return { ok: code === 0 };
+}
+
+// 检查已安装插件的可升级版本（npm 源逐个查 dist-tags；github/git 源跳过）。
+async function checkPluginUpdates() {
+  const plugins = getProfilePlugins();
+  const out = [];
+  for (const p of plugins) {
+    const nonNpm = /^(github:|git\+|https?:|file:|\.{1,2}[\\/])/.test(p.name);
+    if (nonNpm) {
+      out.push({ name: p.name, version: p.version, latest: null, hasUpdate: false, updatable: false });
+      continue;
+    }
+    const latest = await latestVersionFor(p.name);
+    out.push({
+      name: p.name,
+      version: p.version,
+      latest,
+      hasUpdate: !!(latest && compareVersions(latest, p.version) > 0),
+      updatable: true,
+    });
+  }
+  return { plugins: out };
+}
+
+// 升级插件 = 重新 add（dsh plugin add 会装到最新版本）。
+async function upgradePlugin(name) {
+  const pkgName = String(name || '').trim();
+  if (!pkgName) return { ok: false, error: '包名不能为空' };
+  if (busy) return { ok: false, error: '有操作正在进行' };
+  busy = 'plugin';
+  sendState();
+  log(`升级插件 ${pkgName}（dsh plugin --profile web add ${pkgName}）...`);
+  const code = await runPluginCommand(['add', pkgName], (s) => log(s));
+  busy = null;
+  sendState();
+  if (code === 0) log(`插件 ${pkgName} 升级完成，重启 DSH 后生效。`);
+  else log(`插件 ${pkgName} 升级失败（退出码 ${code}），见上方日志。`);
   return { ok: code === 0 };
 }
 
@@ -1746,8 +1786,10 @@ function setupIpc() {
   ipcMain.handle('rollback', () => rollback());
   ipcMain.handle('get-recent-logs', () => getRecentLogLines());
   ipcMain.handle('get-plugins', () => ({ plugins: getProfilePlugins() }));
+  ipcMain.handle('check-plugin-updates', () => checkPluginUpdates());
   ipcMain.handle('install-plugin', (_e, name) => installPlugin(name));
   ipcMain.handle('remove-plugin', (_e, name) => removePlugin(name));
+  ipcMain.handle('upgrade-plugin', (_e, name) => upgradePlugin(name));
   ipcMain.handle('market-search', (_e, source, query, reset) => searchMarketPage(source, query, !!reset));
   ipcMain.handle('open-market', () => { createMarketWindow(); });
   ipcMain.handle('open-external', (_e, url) => openExternalUrl(url));

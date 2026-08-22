@@ -1074,6 +1074,22 @@ body.dark .seg-cache { background: #3a4673; }
   color: var(--text-muted);
 }
 
+.plugin-ver-up {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.plugin-ver-up.muted {
+  color: var(--text-faint);
+  font-weight: 400;
+}
+
+.panel-head-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .plugin-empty {
   padding: 20px;
   text-align: center;

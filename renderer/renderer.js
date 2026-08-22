@@ -68,6 +68,7 @@ const els = {
   pluginName: $('pluginName'),
   btnInstallPlugin: $('btnInstallPlugin'),
   btnPluginsRefresh: $('btnPluginsRefresh'),
+  btnPluginsCheck: $('btnPluginsCheck'),
   btnMarketOpen: $('btnMarketOpen'),
 };
 
@@ -79,6 +80,8 @@ let lastConfig = null;
 let activeTab = 'home';
 let rollbackTarget = null;
 let lastUiLang = '';
+let pluginUpdateMap = {};
+let pluginUpdatesChecked = false;
 
 function el(tag, cls, text) {
   const e = document.createElement(tag);
@@ -370,6 +373,15 @@ function renderPlugins(plugins) {
   for (const p of plugins) {
     const row = el('div', 'plugin-row');
     row.append(el('span', 'plugin-name', p.name), el('span', 'plugin-ver', 'v' + p.version));
+    const u = pluginUpdateMap[p.name];
+    if (u && u.latest && u.hasUpdate) {
+      row.append(el('span', 'plugin-ver-up', '→ v' + u.latest));
+      const ub = el('button', 'btn btn-small btn-primary', t('btnUpgrade'));
+      ub.addEventListener('click', () => upgradeOne(p.name));
+      row.append(ub);
+    } else if (u && u.latest) {
+      row.append(el('span', 'plugin-ver-up muted', t('pluginUpToDate')));
+    }
     const b = el('button', 'btn btn-small btn-danger', t('btnUninstall'));
     b.addEventListener('click', () => removeOne(p.name));
     row.append(b);
@@ -380,6 +392,25 @@ function renderPlugins(plugins) {
 async function loadPlugins() {
   const res = await window.dsh.getPlugins();
   renderPlugins(res && res.plugins);
+}
+
+async function checkPluginUpdates() {
+  showToast(t('pluginCheckingUpdates'), 'info');
+  const r = await window.dsh.checkPluginUpdates();
+  pluginUpdateMap = {};
+  for (const p of (r && r.plugins) || []) pluginUpdateMap[p.name] = p;
+  pluginUpdatesChecked = true;
+  const hasAny = Object.values(pluginUpdateMap).some((p) => p.hasUpdate);
+  if (!hasAny) showToast(t('pluginUpdatesNone'), 'muted');
+  loadPlugins();
+}
+
+async function upgradeOne(name) {
+  const r = await window.dsh.upgradePlugin(name);
+  showToast(r && r.ok ? t('toastUpgraded', name) : t('toastUpgradeFailed'), r && r.ok ? 'ok' : 'warn');
+  delete pluginUpdateMap[name];
+  await loadPlugins();
+  checkPluginUpdates();
 }
 
 async function removeOne(name) {
@@ -398,7 +429,10 @@ function switchTab(name) {
     $(pageId).hidden = !active;
   }
   if (name === 'usage') loadUsage();
-  if (name === 'plugins') loadPlugins();
+  if (name === 'plugins') {
+    loadPlugins();
+    if (!pluginUpdatesChecked) checkPluginUpdates();
+  }
 }
 
 // ---------------- 配置 ----------------
@@ -572,6 +606,7 @@ els.tabUsage.addEventListener('click', () => switchTab('usage'));
 els.tabPlugins.addEventListener('click', () => switchTab('plugins'));
 els.btnUsageRefresh.addEventListener('click', loadUsage);
 els.btnPluginsRefresh.addEventListener('click', loadPlugins);
+els.btnPluginsCheck.addEventListener('click', checkPluginUpdates);
 
 // 插件市场：打开独立窗口
 els.btnMarketOpen.addEventListener('click', () => window.dsh.openMarket());
