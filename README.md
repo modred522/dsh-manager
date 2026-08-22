@@ -76,8 +76,6 @@ git push origin v1.0.2
 powershell -NoProfile -File tools\build-release.ps1 -Version 1.0.2
 ```
 
-> **代码签名（可选）**：默认构建未签名，Windows SmartScreen 可能提示"未知发布者"。拿到 Authenticode 证书（.pfx）后，在仓库 Settings → Secrets 添加 `CSC_LINK`（pfx 的 base64 或路径）与 `CSC_KEY_PASSWORD`（密码），之后的 release 会自动签名。
-
 ## 目录结构
 
 ```

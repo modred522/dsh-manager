@@ -76,8 +76,6 @@ Local manual build (fallback): outputs to `DSHManagerRelease\release` inside the
 powershell -NoProfile -File tools\build-release.ps1 -Version 1.0.2
 ```
 
-> **Code signing (optional)**: unsigned builds may trigger SmartScreen "unknown publisher". After obtaining an Authenticode certificate (.pfx), add `CSC_LINK` (base64/path of the pfx) and `CSC_KEY_PASSWORD` as repo Secrets — future releases will be signed automatically.
-
 ## Project Layout
 
 ```
