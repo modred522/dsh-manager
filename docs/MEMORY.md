@@ -31,6 +31,7 @@
 15. **任务栏图标修复 + 中英双语**：`app.setAppUserModelId('com.modred522.dsh-manager')`（任务栏图标/通知分组关键，缺了显示空白图标）+ BrowserWindow icon 改用 app.ico（Windows 任务栏认 ICO）；**i18n**：`renderer/i18n.js` 共享词典（164 key，zh/en 平级，`data-i18n`/`data-i18n-ph` 静态替换 + `t()` 动态文案）、配置项 `language`（system/zh/en，设置页语言下拉）、主进程 `MAIN_TEXTS` 管托盘/通知/窗口标题（**日志保持中文**属技术输出）；`tools/check-i18n.js` 做 key 交叉核对。
 16. **插件升级**：`checkPluginUpdates()` 对已装插件逐个查 npm dist-tags 最高版本（GitHub/git 源跳过），`upgradePlugin()` 复用 `dsh plugin add`（重装即升级）；插件页「检查更新」按钮 + 每行「升级」按钮 + `→ vX` 提示；进插件页自动静默检查一次。
 17. **管理器自动更新 + 安装器 + 签名**：`electron-updater`（仅打包版、`autoUpdateManager` 配置开关、`app.isPackaged` 守卫、lazy require）；`electron-builder.yml` 增加 **NSIS 安装器**目标（oneClick:false 可选目录、自动建快捷方式）与 `publish: github`（releaseType:release）；release.yml 用 `electron-builder --publish always` + `GH_TOKEN` 上传安装器/zip/latest.yml（**取代 softprops**）；签名走 `CSC_LINK`/`CSC_KEY_PASSWORD` 环境变量（用户配 GitHub Secrets 即自动签名）。**证书需用户自购**（OV/EV Authenticode），自签证书过不了 SmartScreen。
+18. **main.js 拆分 + 纯函数单测**：抽 `lib/pure.js`（compareVersions/parseVersion/normalizeGithubUrl/parseCimDate/releaseBodyToText/extractAnalysisJson/npmItem/githubItem，无副作用可测）与 `lib/market.js`（searchMarketPage/getNpmPluginInfo/getGithubPluginInfo，只读纯网络，`searchMarketPage` 通过参数注入 `coreDshPackages`）；main.js 从 1933 行减到约 1510 行；`test/pure.test.js` 13 条用例、`npm test`（**用 `--test-isolation=none` 规避受限环境的 spawn EPERM**）、check.yml 增加单测步骤；renderer 里仍保留一份 compareVersions（浏览器上下文无法 require，改动时需与 lib/pure.js 同步）。
 
 ## 三、当前状态
 

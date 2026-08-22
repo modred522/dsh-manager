@@ -16,5 +16,10 @@ jobs:
         run: |
           node --check main.js
           node --check preload.js
+          node --check lib/pure.js
+          node --check lib/market.js
           node --check renderer/renderer.js
           node --check renderer/market.js
+
+      - name: Unit tests (node:test)
+        run: npm test

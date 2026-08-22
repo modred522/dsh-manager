@@ -4,6 +4,9 @@ node_modules/
 # Release build workspace (separate packaging directory, caches included)
 DSHManagerRelease/
 
+# Downloaded/extracted releases (never commit the packaged app)
+ReleaseDownload/
+
 # electron-builder output (CI / manual builds)
 release/
 

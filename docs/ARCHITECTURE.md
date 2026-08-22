@@ -4,15 +4,23 @@
 
 ```
 dsh-manager
-├── main.js                  # 主进程（约 1500 行，核心逻辑全在这）
-├── preload.js               # contextBridge 暴露 window.dsh（27 个 IPC 方法）
+├── main.js                  # 主进程（约 1500 行：入口 + 窗口/托盘 + 进程检测 + 更新 + 用量 + 插件安装/分析 + IPC 装配）
+├── preload.js               # contextBridge 暴露 window.dsh（32 个 IPC 方法）
 ├── find-dsh.ps1             # WMI 进程详情脚本（必须纯 ASCII）
-├── package.json             # electron 43.4.0 devDependency；npm start = electron .
-├── assets/                  # whale.png、app.ico（鲸鱼图标）
-├── tools/render-icon.ps1    # 图标重新生成工具（STA 运行，纯 ASCII）
+├── lib/
+│   ├── pure.js              # 纯函数：版本比较/URL 归一化/JSON 提取/文案转换（无副作用，可测）
+│   └── market.js            # 插件市场搜索与详情（只读、纯网络）
+├── test/
+│   └── pure.test.js         # node:test 单元测试（`npm test`）
+├── package.json             # electron 43.4.0；npm start = electron .；npm test = node --test
+├── electron-builder.yml     # 打包配置（NSIS + zip + GitHub publish）
+├── .github/workflows/       # check（语法+单测）/ release（tag 自动发版）
+├── assets/                  # whale.png、app.ico、social-preview.png、screenshots/
+├── tools/                   # render-icon / social-preview / build-release / publish / check-i18n
 ├── renderer/
 │   ├── index.html           # 三页签 + 2 个弹窗（更新/关于）
-│   ├── renderer.js          # 主窗口界面逻辑（61 个元素绑定）
+│   ├── renderer.js          # 主窗口界面逻辑
+│   ├── i18n.js              # 中英词典（data-i18n + t()）
 │   ├── market.html          # 插件市场独立窗口页面
 │   ├── market.js            # 插件市场窗口逻辑（搜索/详情/分析/安装）
 │   └── styles.css           # CSS 变量 + 深色模式 + 全套动效

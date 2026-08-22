@@ -101,7 +101,8 @@ dsh-manager
 
 ```powershell
 npm start                                  # 启动应用
-node --check main.js                       # 语法检查（preload.js、renderer/*.js 同理）
+npm test                                   # 纯函数单元测试（node:test）
+node --check main.js                       # 语法检查（preload.js、lib/*.js、renderer/*.js 同理）
 Get-Process electron | Stop-Process -Force # 改完代码杀旧实例
 powershell -NoProfile -STA -File tools\render-icon.ps1  # 重新生成鲸鱼图标
 powershell -NoProfile -File tools\publish.ps1  # fork 后一键发布到自己的 GitHub 仓库

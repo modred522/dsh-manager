@@ -7,6 +7,9 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 
+const { compareVersions, parseCimDate, releaseBodyToText, extractAnalysisJson } = require('./lib/pure');
+const market = require('./lib/market');
+
 // ---------------------------------------------------------------------------
 // 错误兜底：写入 crash.log，避免“点了没反应”。
 // ---------------------------------------------------------------------------
@@ -295,51 +298,6 @@ function getLatestVersion() {
   return latestVersionFor('@deepseek-ai/dsh');
 }
 
-function compareVersions(a, b) {
-  // 预发布段按数字段/字符串段逐段比较（semver 规则）：
-  // rc.10 > rc.9（纯字符串比较会错）；数字段大于字符串段；缺段者更小。
-  const parse = (v) => {
-    const s = String(v || '').trim().replace(/^v/, '');
-    const [core, ...preParts] = s.split('-');
-    const nums = (core || '').split('.').map((n) => parseInt(n, 10) || 0);
-    while (nums.length < 3) nums.push(0);
-    const pre = preParts.length
-      ? preParts.join('-').split('.').map((p) => (/^\d+$/.test(p) ? parseInt(p, 10) : p))
-      : null;
-    return { nums, pre };
-  };
-  const cmpPre = (xp, yp) => {
-    if (xp === null && yp === null) return 0;
-    if (xp === null) return 1;
-    if (yp === null) return -1;
-    const len = Math.max(xp.length, yp.length);
-    for (let i = 0; i < len; i++) {
-      const x = xp[i];
-      const y = yp[i];
-      if (x === undefined) return -1;
-      if (y === undefined) return 1;
-      const xNum = typeof x === 'number';
-      const yNum = typeof y === 'number';
-      if (xNum && yNum) {
-        if (x !== y) return x > y ? 1 : -1;
-      } else if (xNum) {
-        return 1;
-      } else if (yNum) {
-        return -1;
-      } else if (x !== y) {
-        return x > y ? 1 : -1;
-      }
-    }
-    return 0;
-  };
-  const x = parse(a);
-  const y = parse(b);
-  for (let i = 0; i < 3; i++) {
-    if (x.nums[i] !== y.nums[i]) return x.nums[i] > y.nums[i] ? 1 : -1;
-  }
-  return cmpPre(x.pre, y.pre);
-}
-
 function isServerUp(url, timeoutMs = 1500) {
   return new Promise((resolve) => {
     const req = http.get(url, { timeout: timeoutMs }, () => { resolve(true); req.destroy(); });
@@ -419,12 +377,6 @@ function netstatListeningPids(port) {
 }
 
 // CIM 时间 "20260816102243.123456+480" -> "2026-08-16 10:22:43"；格式不符返回 null。
-function parseCimDate(s) {
-  const m = String(s || '').trim().match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})/);
-  if (!m) return null;
-  return `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]}`;
-}
-
 // WMI 详情（PID/命令行/启动时间），低频调用（30 秒缓存）。
 function wmiProcessDetails(pids) {
   return new Promise((resolve) => {
@@ -565,23 +517,6 @@ function runInstall(version, onLine) {
 // ---------------------------------------------------------------------------
 // 更新日志（GitHub Release）
 // ---------------------------------------------------------------------------
-function releaseBodyToText(body) {
-  let text = String(body || '');
-  // 只保留中文部分（英文段落在 <h3 id="en"> 之后）
-  const enIdx = text.indexOf('<h3 id="en">');
-  if (enIdx !== -1) text = text.slice(0, enIdx);
-  text = text.replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, (_m, inner) => '\n■ ' + inner.replace(/<[^>]+>/g, '').replace(/\[[^\]]*\]/g, '').trim() + '\n');
-  text = text.replace(/^###\s+/gm, '\n■ ');
-  text = text.replace(/<[^>]+>/g, '');
-  text = text.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
-  text = text.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
-  text = text.replace(/\*\*([^*]+)\*\*/g, '$1');
-  text = text.replace(/^\s*[-*]\s+/gm, '  • ');
-  text = text.replace(/`([^`]*)`/g, '$1');
-  text = text.replace(/^\s*---+\s*$/gm, '');
-  return text.split('\n').map((l) => l.trimEnd()).join('\n').trim();
-}
-
 async function fetchChangelog(version) {
   if (!version) return null;
   if (changelogCache.version === version) return changelogCache.text;
@@ -801,235 +736,9 @@ async function upgradePlugin(name) {
 // ---------------------------------------------------------------------------
 
 // 从仓库/主页 URL 中提取干净的 GitHub 页面地址。
-function normalizeGithubUrl(url) {
-  const s = String(url || '');
-  const m = s.match(/github\.com\/([^/]+)\/([^/?#.]+)/);
-  return m ? `https://github.com/${m[1]}/${m[2]}` : '';
-}
-
 // ---------------------------------------------------------------------------
-// 分页搜索：每次返回一批（约 20 条），渲染层滑到底部继续取下一页
+// 插件市场（npm / GitHub 双源）：搜索/详情逻辑已抽到 lib/market.js
 // ---------------------------------------------------------------------------
-const NPM_PAGE_SIZE = 25;   // npm 接口每页条数
-const GH_PAGE_SIZE = 20;    // GitHub 接口每页条数
-const MARKET_BATCH = 20;    // 每次返回给渲染层的条数
-const NPM_MAX_FROM = 500;   // npm 搜索偏移上限（防御性终止）
-const GH_MAX_PAGE = 50;     // GitHub 搜索最多 1000 条（20 条/页 × 50 页）
-
-// 排序说明：GitHub 固定 sort=stars（星标降序）；
-// npm 走 registry 默认相关度排序（内部综合 质量/维护/流行度 打分，非纯下载量）。
-function npmQueries(q) {
-  const list = [];
-  if (q) list.push(q);
-  list.push('keywords:dsh-plugin', 'keywords:dsh');
-  return list;
-}
-
-function githubQueries(q) {
-  const list = [];
-  if (q) list.push(q);
-  list.push('dsh plugin', 'deepseek-harness plugin', 'topic:dsh');
-  return list;
-}
-
-function npmItem(p) {
-  return {
-    name: p.name,
-    version: p.version,
-    description: p.description || '',
-    keywords: p.keywords || [],
-    publisher: (p.publisher && p.publisher.username) || '',
-    date: (p.date || '').slice(0, 10),
-    scope: p.name.startsWith('@deepseek-ai/') ? 'official' : 'community',
-    homepage: (p.links && p.links.homepage) || '',
-    repoUrl: normalizeGithubUrl((p.links && p.links.repository) || '') ||
-      normalizeGithubUrl((p.links && p.links.homepage) || ''),
-  };
-}
-
-function githubItem(it) {
-  return {
-    repo: it.full_name,
-    owner: (it.owner && it.owner.login) || '',
-    name: it.name,
-    description: it.description || '',
-    stars: it.stargazers_count || 0,
-    forks: it.forks_count || 0,
-    language: it.language || '',
-    updated: (it.updated_at || '').slice(0, 10),
-    topics: it.topics || [],
-    url: it.html_url || '',
-  };
-}
-
-async function fetchNpmPage(query, from) {
-  const url = `https://registry.npmjs.org/-/v1/search?text=${encodeURIComponent(query)}&size=${NPM_PAGE_SIZE}&from=${from}`;
-  try {
-    const res = await fetch(url, { headers: { 'User-Agent': 'dsh-manager' } });
-    if (!res.ok) return null;
-    const j = await res.json();
-    return (j.objects || []).map((o) => o.package).filter(Boolean);
-  } catch {
-    return null;
-  }
-}
-
-async function fetchGithubPage(query, page) {
-  const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(query)}&per_page=${GH_PAGE_SIZE}&page=${page}&sort=stars`;
-  try {
-    const res = await fetch(url, { headers: { 'User-Agent': 'dsh-manager' } });
-    if (!res.ok) return null; // 403 限流或其它错误
-    const j = await res.json();
-    return j.items || [];
-  } catch {
-    return null;
-  }
-}
-
-// 当前搜索的分页游标（单一会话状态；源或关键词变化时重置）。
-let marketState = null; // { source, query, seen:Set, cursors:Map, rateLimited }
-
-async function searchMarketPage(source, query, reset) {
-  const q = String(query || '').trim();
-  if (reset || !marketState || marketState.source !== source || marketState.query !== q) {
-    marketState = { source, query: q, seen: new Set(), cursors: new Map(), rateLimited: false };
-  }
-  const st = marketState;
-  const queries = source === 'github' ? githubQueries(q) : npmQueries(q);
-  const items = [];
-  let rateLimited = false;
-
-  for (const key of queries) {
-    let cur = st.cursors.get(key);
-    if (!cur) {
-      cur = { next: source === 'github' ? 1 : 0, exhausted: false };
-      st.cursors.set(key, cur);
-    }
-    if (cur.exhausted) continue;
-
-    const raw = source === 'github'
-      ? await fetchGithubPage(key, cur.next)
-      : await fetchNpmPage(key, cur.next);
-
-    if (raw === null) {
-      cur.exhausted = true;
-      rateLimited = true; // 网络错误或限流：此 query 本次到此为止
-      continue;
-    }
-    if (!raw.length) {
-      cur.exhausted = true;
-      continue;
-    }
-    cur.next += source === 'github' ? 1 : raw.length;
-    if ((source === 'github' && cur.next > GH_MAX_PAGE) || (source === 'npm' && cur.next >= NPM_MAX_FROM)) {
-      cur.exhausted = true;
-    }
-
-    for (const p of raw) {
-      const id = source === 'github' ? p.full_name : p.name;
-      if (!id || st.seen.has(id)) continue;
-      st.seen.add(id);
-      const item = source === 'github' ? githubItem(p) : npmItem(p);
-      // npm：排除 dsh CLI 自身核心包，且要求关键词命中 dsh/deepseek/harness。
-      if (source === 'npm') {
-        if (coreDshPackages.has(item.name)) continue;
-        if (!item.keywords.some((k) => /dsh|deepseek|harness/i.test(k))) continue;
-      }
-      items.push(item);
-      if (items.length >= MARKET_BATCH) break;
-    }
-    if (items.length >= MARKET_BATCH) break;
-  }
-
-  st.rateLimited = st.rateLimited || rateLimited;
-  const hasMore = items.length >= MARKET_BATCH ||
-    queries.some((k) => { const c = st.cursors.get(k); return c && !c.exhausted; });
-  return { items, hasMore, rateLimited: st.rateLimited, total: st.seen.size };
-}
-
-async function getGithubRepoStats(owner, repo) {
-  try {
-    const g = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers: { 'User-Agent': 'dsh-manager' } }).then((r) => (r.ok ? r.json() : null));
-    if (!g || g.message) return null;
-    let readme = '';
-    try {
-      const r = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/HEAD/README.md`, { headers: { 'User-Agent': 'dsh-manager' } });
-      if (r.ok) readme = (await r.text()).slice(0, 60000);
-    } catch {
-      // 忽略 README 失败。
-    }
-    return {
-      fullName: g.full_name,
-      stars: g.stargazers_count || 0,
-      forks: g.forks_count || 0,
-      openIssues: g.open_issues_count || 0,
-      created: (g.created_at || '').slice(0, 10),
-      pushed: (g.pushed_at || '').slice(0, 10),
-      license: (g.license && g.license.spdx_id) || null,
-      description: g.description || '',
-      topics: g.topics || [],
-      readme,
-    };
-  } catch {
-    return null;
-  }
-}
-
-async function getNpmPluginInfo(name) {
-  try {
-    const pack = await fetch(`https://registry.npmjs.org/${encodeURIComponent(name)}`, { headers: { 'User-Agent': 'dsh-manager' } }).then((r) => (r.ok ? r.json() : null));
-    if (!pack || pack.error) return null;
-    const latest = pack['dist-tags'] && pack['dist-tags'].latest;
-    const v = pack.versions && pack.versions[latest];
-    let downloads = null;
-    try {
-      const d = await fetch(`https://api.npmjs.org/downloads/point/last-week/${encodeURIComponent(name)}`).then((r) => r.json());
-      downloads = d && d.downloads != null ? d.downloads : null;
-    } catch {
-      // 忽略下载量失败。
-    }
-    let repo = null;
-    const repoUrl = (v && v.repository && v.repository.url) || '';
-    const rm = repoUrl.match(/github\.com\/([^/]+)\/([^/.#]+)/);
-    if (rm) repo = await getGithubRepoStats(rm[1], rm[2]);
-    return {
-      name: pack.name,
-      version: latest,
-      description: pack.description || '',
-      keywords: pack.keywords || [],
-      license: (v && v.license && (typeof v.license === 'string' ? v.license : v.license.type)) || null,
-      homepage: (v && v.homepage) || pack.homepage || '',
-      repository: repoUrl || '',
-      created: ((pack.time && pack.time.created) || '').slice(0, 10),
-      modified: ((pack.time && pack.time[latest]) || '').slice(0, 10),
-      downloads,
-      readme: (pack.readme || '').slice(0, 60000),
-      repo,
-      maintainers: (pack.maintainers || []).map((m) => m.name).slice(0, 5),
-    };
-  } catch {
-    return null;
-  }
-}
-
-async function getGithubPluginInfo(owner, repo) {
-  const stats = await getGithubRepoStats(owner, repo);
-  let pkg = null;
-  try {
-    const r = await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/HEAD/package.json`, { headers: { 'User-Agent': 'dsh-manager' } });
-    if (r.ok) pkg = await r.json();
-  } catch {
-    // 忽略。
-  }
-  return {
-    repo: `${owner}/${repo}`,
-    name: (pkg && pkg.name) || repo,
-    pkgName: (pkg && pkg.name) || null,
-    version: (pkg && pkg.version) || 'git',
-    description: (stats && stats.description) || (pkg && pkg.description) || '',
-    stats,
-  };
-}
 
 // GitHub 插件安装：pnpm 默认禁止执行 git 依赖的 prepare 构建脚本，
 // 需先把包名加入 web profile 的 pnpm-workspace.yaml allowBuilds（风险已由渲染层确认）。
@@ -1047,7 +756,7 @@ async function installGithubPlugin(owner, repo) {
   busy = 'plugin';
   sendState();
   log(`准备安装 GitHub 插件 ${owner}/${repo}...`);
-  const info = await getGithubPluginInfo(owner, repo);
+  const info = await market.getGithubPluginInfo(owner, repo);
   if (info.pkgName) {
     try { ensureAllowBuilds(info.pkgName); } catch (e) { log('allowBuilds 写入失败: ' + e.message); }
   }
@@ -1156,19 +865,6 @@ async function ensureAnalysisEnv() {
   } catch (e) {
     sendAnalyzeLog('分析环境检查失败: ' + e.message);
   }
-}
-
-function extractAnalysisJson(text) {
-  const blocks = [...String(text || '').matchAll(/\{[\s\S]*?\}/g)].map((m) => m[0]).reverse();
-  for (const b of blocks) {
-    try {
-      const obj = JSON.parse(b);
-      if (obj && (typeof obj.score !== 'undefined' || obj.verdict)) return obj;
-    } catch {
-      // 继续尝试。
-    }
-  }
-  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1306,7 +1002,7 @@ async function analyzePlugin(source, ref, force) {
     let dossier;
     if (source === 'npm') {
       sendAnalyzeLog('正在收集插件档案（npm + GitHub）...');
-      info = await getNpmPluginInfo(ref);
+      info = await market.getNpmPluginInfo(ref);
       if (!info) {
         sendAnalyzeLog('获取插件信息失败（网络异常或包不存在）。');
         return { ok: false, error: 'info' };
@@ -1316,7 +1012,7 @@ async function analyzePlugin(source, ref, force) {
     } else {
       const parts = String(ref).split('/');
       sendAnalyzeLog('正在收集插件档案（GitHub）...');
-      info = await getGithubPluginInfo(parts[0], parts[1]);
+      info = await market.getGithubPluginInfo(parts[0], parts[1]);
       if (!info || !info.stats) {
         sendAnalyzeLog('获取仓库信息失败（可能被限流或仓库不存在）。');
         return { ok: false, error: 'info' };
@@ -1856,11 +1552,11 @@ function setupIpc() {
   ipcMain.handle('install-plugin', (_e, name) => installPlugin(name));
   ipcMain.handle('remove-plugin', (_e, name) => removePlugin(name));
   ipcMain.handle('upgrade-plugin', (_e, name) => upgradePlugin(name));
-  ipcMain.handle('market-search', (_e, source, query, reset) => searchMarketPage(source, query, !!reset));
+  ipcMain.handle('market-search', (_e, source, query, reset) => market.searchMarketPage(source, query, !!reset, coreDshPackages));
   ipcMain.handle('open-market', () => { createMarketWindow(); });
   ipcMain.handle('open-external', (_e, url) => openExternalUrl(url));
-  ipcMain.handle('plugin-info', (_e, name) => getNpmPluginInfo(name));
-  ipcMain.handle('github-plugin-info', (_e, owner, repo) => getGithubPluginInfo(owner, repo));
+  ipcMain.handle('plugin-info', (_e, name) => market.getNpmPluginInfo(name));
+  ipcMain.handle('github-plugin-info', (_e, owner, repo) => market.getGithubPluginInfo(owner, repo));
   ipcMain.handle('install-github-plugin', (_e, owner, repo) => installGithubPlugin(owner, repo));
   ipcMain.handle('plugin-analyze', (_e, source, ref, force) => analyzePlugin(source, ref, !!force));
   ipcMain.handle('plugin-analyze-stop', () => stopAnalysis());

@@ -50,7 +50,8 @@
 
 ## 六、交付检查清单（每次改完跑一遍）
 
-- [ ] `node --check` 四个 JS 文件（main / preload / renderer / market）
+- [ ] `node --check` 六个 JS 文件（main / preload / lib/pure / lib/market / renderer / market）
+- [ ] `npm test`（纯函数单测；**受限环境用 `--test-isolation=none` 规避 node:test 子进程 spawn EPERM**）
 - [ ] renderer.js 的 `$('id')` 与 index.html 的 `id=` 交叉核对（历史上靠这个抓过缺元素）
 - [ ] preload 的 invoke 通道与 main.js 的 ipcMain.handle 一一对应
 - [ ] 涉及 .ps1：确认纯 ASCII + 在 `powershell.exe`（5.1）下跑通

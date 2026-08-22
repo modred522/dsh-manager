@@ -4,7 +4,8 @@
   "description": "DSH (DeepSeek Harness) 桌面管理器 — Electron 版",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "test": "node --test --test-isolation=none"
   },
   "author": "",
   "license": "MIT",
