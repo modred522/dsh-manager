@@ -16,6 +16,9 @@
   "bugs": {
     "url": "https://github.com/modred522/dsh-manager/issues"
   },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
   "devDependencies": {
     "electron": "^43.4.0"
   }

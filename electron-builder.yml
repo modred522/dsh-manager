@@ -12,9 +12,25 @@ files:
   - assets/app.ico
   - package.json
   - LICENSE
+publish:
+  provider: github
+  owner: modred522
+  repo: dsh-manager
+  releaseType: release
 win:
+  icon: assets/app.ico
   target:
+    - target: nsis
+      arch:
+        - x64
     - target: zip
       arch:
         - x64
-  icon: assets/app.ico
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: DSH Manager
+  runAfterFinish: true

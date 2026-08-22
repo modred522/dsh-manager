@@ -28,11 +28,11 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Build win-x64 zip
-        run: npx electron-builder --win zip --x64 --config electron-builder.yml
-
-      - name: Upload release asset
-        uses: softprops/action-gh-release@v2
-        with:
-          files: release/*.zip
-          generate_release_notes: true
+      # 构建并发布：electron-builder 用 GH_TOKEN 上传 NSIS 安装器 + zip + latest.yml
+      # 到 GitHub Release；若配置了 CSC_LINK/CSC_KEY_PASSWORD 则同时做代码签名。
+      - name: Build, sign and publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        run: npx electron-builder --win nsis zip --x64 --config electron-builder.yml --publish always

@@ -29,6 +29,8 @@
 13. **分析会话隔离**：headless 分析 spawn 加官方 `--patch` 层，把 `session-persistence-jsonl.root` 重定向到管理器私有目录 `%APPDATA%\DshManager\analysis-sessions\`（分析会话不再出现在 dsh web 聊天列表和用量统计）；分析结束按配置清理该目录（设置项"分析后清理分析会话"默认开）；启动时校验 dsh 版本的行 id 并清理崩溃遗留。**约定：绝不删除 `$DSH_HOME/sessions` 下的用户会话（用户自己清理）。**
 14. **发布 GitHub 公共仓库**：`https://github.com/modred522/dsh-manager`（MIT）；CI = `.github/workflows/check.yml`（push 自动 node --check）；**自动发版** = `.github/workflows/release.yml`（推 `v*` tag → GitHub windows runner 用共享的 `electron-builder.yml` 打包 zip → softprops 自动建 Release 挂附件，本机零操作）；本地备用 `tools/build-release.ps1`（项目内 `DSHManagerRelease`，已 gitignore）；`tools/publish.ps1` 发布、`tools/social-preview.ps1` 生成社交预览卡（Settings→Social preview 手动上传）；打包版快捷方式/自启不带项目目录参数（`app.isPackaged` 判断）。
 15. **任务栏图标修复 + 中英双语**：`app.setAppUserModelId('com.modred522.dsh-manager')`（任务栏图标/通知分组关键，缺了显示空白图标）+ BrowserWindow icon 改用 app.ico（Windows 任务栏认 ICO）；**i18n**：`renderer/i18n.js` 共享词典（164 key，zh/en 平级，`data-i18n`/`data-i18n-ph` 静态替换 + `t()` 动态文案）、配置项 `language`（system/zh/en，设置页语言下拉）、主进程 `MAIN_TEXTS` 管托盘/通知/窗口标题（**日志保持中文**属技术输出）；`tools/check-i18n.js` 做 key 交叉核对。
+16. **插件升级**：`checkPluginUpdates()` 对已装插件逐个查 npm dist-tags 最高版本（GitHub/git 源跳过），`upgradePlugin()` 复用 `dsh plugin add`（重装即升级）；插件页「检查更新」按钮 + 每行「升级」按钮 + `→ vX` 提示；进插件页自动静默检查一次。
+17. **管理器自动更新 + 安装器 + 签名**：`electron-updater`（仅打包版、`autoUpdateManager` 配置开关、`app.isPackaged` 守卫、lazy require）；`electron-builder.yml` 增加 **NSIS 安装器**目标（oneClick:false 可选目录、自动建快捷方式）与 `publish: github`（releaseType:release）；release.yml 用 `electron-builder --publish always` + `GH_TOKEN` 上传安装器/zip/latest.yml（**取代 softprops**）；签名走 `CSC_LINK`/`CSC_KEY_PASSWORD` 环境变量（用户配 GitHub Secrets 即自动签名）。**证书需用户自购**（OV/EV Authenticode），自签证书过不了 SmartScreen。
 
 ## 三、当前状态
 

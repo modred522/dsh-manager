@@ -59,3 +59,5 @@
 - [ ] 发布公共仓库前：确认无个人路径/密钥，node_modules 被 .gitignore 排除
 - [ ] 涉及界面文案：跑 `node tools\check-i18n.js`（i18n key 交叉核对）+ 确认新词条中英都写了
 - [ ] 涉及窗口/托盘图标：确认 `app.setAppUserModelId` 已设、BrowserWindow icon 用 ICO（Windows 任务栏用 exe 图标，PNG 只作用标题栏）
+- [ ] 涉及管理器自身更新：electron-updater 只在 `app.isPackaged` 下生效，且需要 **NSIS 目标 + GitHub publish 元数据**（zip 目标不支持自动更新）；`latest.yml` 由 electron-builder `--publish always` 生成并上传到 Release
+- [ ] 代码签名：未配 `CSC_LINK`/`CSC_KEY_PASSWORD` 时 electron-builder 自动跳过签名（不报错）；配置后自动签。自签证书对 SmartScreen 无效，正式发布需 OV/EV 证书

@@ -50,13 +50,20 @@ npm start
 
 ## 安装（发行版 Release）
 
-便携版 zip：解压即用，无需搭建 Electron 开发环境。仍需要本机装有 **Node.js 与 dsh CLI**（管理器通过它们启动/更新 DSH）。
+仍需要本机装有 **Node.js 与 dsh CLI**（管理器通过它们启动/更新 DSH）。
 
-1. 到 [Releases](https://github.com/modred522/dsh-manager/releases) 下载最新的 `DSH-Manager-<版本>-win.zip`
-2. 解压到任意目录，双击 `DSH Manager.exe`
-3. 首次运行后可在「总览 → 工具」创建桌面快捷方式；应用托盘常驻
+**方式一：安装器（推荐，带自动更新）**
 
-发版（维护者）：**推 tag 自动发版**——GitHub Actions 在服务器上自动打包 zip 并创建 Release：
+1. 到 [Releases](https://github.com/modred522/dsh-manager/releases) 下载最新的 `DSH-Manager-Setup-<版本>.exe`
+2. 双击安装，可选安装目录、自动创建桌面/开始菜单快捷方式
+3. 之后管理器会自动检测并下载新版本（「总览 → 设置」里的「自动更新管理器」开关），下载完成提示重启即升级
+
+**方式二：便携版 zip（解压即用）**
+
+1. 下载 `DSH-Manager-<版本>-win.zip`
+2. 解压到任意目录，双击 `DSH Manager.exe`（便携版不含自动更新，手动下载新版覆盖即可）
+
+发版（维护者）：**推 tag 自动发版**——GitHub Actions 在服务器上自动打包并创建 Release：
 
 ```powershell
 git tag v1.0.2
@@ -68,6 +75,8 @@ git push origin v1.0.2
 ```powershell
 powershell -NoProfile -File tools\build-release.ps1 -Version 1.0.2
 ```
+
+> **代码签名（可选）**：默认构建未签名，Windows SmartScreen 可能提示"未知发布者"。拿到 Authenticode 证书（.pfx）后，在仓库 Settings → Secrets 添加 `CSC_LINK`（pfx 的 base64 或路径）与 `CSC_KEY_PASSWORD`（密码），之后的 release 会自动签名。
 
 ## 目录结构
 

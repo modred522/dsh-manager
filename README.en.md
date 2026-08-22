@@ -50,13 +50,20 @@ npm start
 
 ## Installation (Release)
 
-Portable zip: extract and run, no Electron dev environment needed. Node.js and the dsh CLI are still required on the machine (the manager uses them to start/update DSH).
+Node.js and the dsh CLI are still required on the machine (the manager uses them to start/update DSH).
 
-1. Download the latest `DSH-Manager-<version>-win.zip` from [Releases](https://github.com/modred522/dsh-manager/releases)
-2. Extract it anywhere and double-click `DSH Manager.exe`
-3. Optionally create a desktop shortcut afterwards via "Overview → Tools"; the app lives in the system tray
+**Option A: Installer (recommended, with auto-update)**
 
-Releasing (maintainers): **push a tag to release automatically** — GitHub Actions builds the zip and creates the Release on GitHub's servers:
+1. Download the latest `DSH-Manager-Setup-<version>.exe` from [Releases](https://github.com/modred522/dsh-manager/releases)
+2. Run the installer; choose the install directory, desktop/start-menu shortcuts are created for you
+3. Afterwards the manager checks for and downloads updates automatically (toggle "Auto-update the manager" under "Overview → Settings") and prompts a restart to apply
+
+**Option B: Portable zip**
+
+1. Download `DSH-Manager-<version>-win.zip`
+2. Extract anywhere and double-click `DSH Manager.exe` (no auto-update; replace with a newer zip manually)
+
+Releasing (maintainers): **push a tag to release automatically** — GitHub Actions builds and creates the Release on GitHub's servers:
 
 ```powershell
 git tag v1.0.2
@@ -68,6 +75,8 @@ Local manual build (fallback): outputs to `DSHManagerRelease\release` inside the
 ```powershell
 powershell -NoProfile -File tools\build-release.ps1 -Version 1.0.2
 ```
+
+> **Code signing (optional)**: unsigned builds may trigger SmartScreen "unknown publisher". After obtaining an Authenticode certificate (.pfx), add `CSC_LINK` (base64/path of the pfx) and `CSC_KEY_PASSWORD` as repo Secrets — future releases will be signed automatically.
 
 ## Project Layout
 

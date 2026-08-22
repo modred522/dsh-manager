@@ -42,6 +42,7 @@ const DEFAULT_CONFIG = {
   // 行为
   watchdog: true, // DSH 异常退出自动重启（守护）
   cleanAnalysisSessions: true, // 插件分析结束后清理分析会话目录（不影响 dsh web 会话）
+  autoUpdateManager: true, // 打包版自动检查并下载管理器自身更新（electron-updater）
   language: 'system', // 界面语言：'system' | 'zh' | 'en'
   theme: 'system', // 'system' | 'light' | 'dark'
   windowBounds: null, // 记忆窗口位置大小
@@ -73,6 +74,10 @@ const MAIN_TEXTS = {
     notifyUpdatedBody: (v) => `DSH 已更新到 ${v}`,
     notifyRollbackTitle: '回滚完成',
     notifyRollbackBody: (v) => `DSH 已回滚到 ${v}`,
+    mgrUpdateReadyTitle: '管理器更新已就绪',
+    mgrUpdateReadyBody: (v) => `DSH 管理器新版本 v${v} 已下载完成，重启后生效。`,
+    mgrUpdateRestart: '立即重启',
+    mgrUpdateLater: '稍后',
   },
   en: {
     appTitle: 'DSH Manager',
@@ -92,6 +97,10 @@ const MAIN_TEXTS = {
     notifyUpdatedBody: (v) => `DSH has been updated to ${v}`,
     notifyRollbackTitle: 'Rollback Complete',
     notifyRollbackBody: (v) => `DSH has been rolled back to ${v}`,
+    mgrUpdateReadyTitle: 'Manager Update Ready',
+    mgrUpdateReadyBody: (v) => `DSH Manager v${v} has been downloaded and will apply on restart.`,
+    mgrUpdateRestart: 'Restart Now',
+    mgrUpdateLater: 'Later',
   },
 };
 
@@ -1692,6 +1701,63 @@ function applyThemeSource() {
   try { nativeTheme.themeSource = config.theme || 'system'; } catch {}
 }
 
+// ---------------------------------------------------------------------------
+// 管理器自身更新（electron-updater，仅打包版；需要 NSIS 目标 + GitHub 发布元数据）
+// ---------------------------------------------------------------------------
+function setupAutoUpdater() {
+  if (!app.isPackaged || config.autoUpdateManager === false) return;
+  let updater;
+  try {
+    ({ autoUpdater: updater } = require('electron-updater'));
+  } catch (e) {
+    log('管理器自动更新不可用（缺少 electron-updater）: ' + e.message);
+    return;
+  }
+  updater.autoDownload = true;
+  updater.autoInstallOnAppQuit = true;
+  updater.on('error', (e) => log('管理器更新出错: ' + ((e && e.message) || e)));
+  updater.on('checking-for-update', () => log('正在检查管理器更新...'));
+  updater.on('update-available', (info) => log(`发现管理器新版本 ${info.version}，开始后台下载...`));
+  updater.on('update-not-available', () => log('管理器已是最新版本。'));
+  updater.on('download-progress', (p) => {
+    try {
+      if (mainWindow && !mainWindow.isDestroyed() && p && p.percent != null) {
+        mainWindow.setProgressBar(p.percent / 100);
+      }
+    } catch {}
+  });
+  updater.on('update-downloaded', (info) => {
+    try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setProgressBar(-1); } catch {}
+    log(`管理器新版本 ${info.version} 已下载，重启后生效。`);
+    notify(uiText('mgrUpdateReadyTitle'), uiText('mgrUpdateReadyBody', info.version));
+    try {
+      const opts = {
+        type: 'info',
+        title: uiText('mgrUpdateReadyTitle'),
+        message: uiText('mgrUpdateReadyTitle'),
+        detail: uiText('mgrUpdateReadyBody', info.version),
+        buttons: [uiText('mgrUpdateRestart'), uiText('mgrUpdateLater')],
+        defaultId: 0,
+        cancelId: 1,
+      };
+      (mainWindow && !mainWindow.isDestroyed()
+        ? dialog.showMessageBox(mainWindow, opts)
+        : dialog.showMessageBox(opts)
+      ).then(({ response }) => {
+        if (response === 0) {
+          isQuitting = true;
+          try { updater.quitAndInstall(); } catch {}
+        }
+      }).catch(() => {});
+    } catch {}
+  });
+  try {
+    updater.checkForUpdates().catch((e) => log('管理器更新检查失败: ' + (e && e.message)));
+  } catch (e) {
+    log('管理器更新检查失败: ' + e.message);
+  }
+}
+
 function buildTrayMenu(stopLabel) {
   return Menu.buildFromTemplate([
     { label: uiText('trayOpen'), click: () => showWindow() },
@@ -1838,6 +1904,7 @@ if (!gotLock) {
     configureStateTimer();
     registerGlobalShortcuts();
     cleanupOldLogs();
+    setupAutoUpdater(); // 打包版自动检查管理器更新
 
     if (config.createDesktopShortcut) createShortcut(true);
 

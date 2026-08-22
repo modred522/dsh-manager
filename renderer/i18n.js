@@ -25,7 +25,7 @@ const I18N = {
     checkingNow: '检查中…', updatingNow: '更新中…', installingNow: '安装中…',
     // settings
     setAutoCheck: '自动检查更新', setWatchdog: '崩溃自动重启',
-    setCleanAnalysis: '分析后清理分析会话', setSilent: '启动时静默到托盘',
+    setCleanAnalysis: '分析后清理分析会话', setAutoUpdateManager: '自动更新管理器', setSilent: '启动时静默到托盘',
     setAutoStart: '开机自动运行',
     setTheme: '主题', themeSystem: '跟随系统', themeLight: '浅色', themeDark: '深色',
     setLanguage: '语言', langSystem: '跟随系统', langZh: '中文', langEn: 'English',
@@ -118,7 +118,7 @@ const I18N = {
     rollback: (v) => `Rollback v${v}`,
     checkingNow: 'Checking…', updatingNow: 'Updating…', installingNow: 'Installing…',
     setAutoCheck: 'Auto check updates', setWatchdog: 'Auto restart on crash',
-    setCleanAnalysis: 'Clean analysis sessions', setSilent: 'Start minimized to tray',
+    setCleanAnalysis: 'Clean analysis sessions', setAutoUpdateManager: 'Auto-update the manager', setSilent: 'Start minimized to tray',
     setAutoStart: 'Run at startup',
     setTheme: 'Theme', themeSystem: 'System', themeLight: 'Light', themeDark: 'Dark',
     setLanguage: 'Language', langSystem: 'System', langZh: '中文', langEn: 'English',

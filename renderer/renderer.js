@@ -24,6 +24,7 @@ const els = {
   chkAutoStart: $('chkAutoStart'),
   chkWatchdog: $('chkWatchdog'),
   chkCleanAnalysis: $('chkCleanAnalysis'),
+  chkAutoUpdateManager: $('chkAutoUpdateManager'),
   chkSilent: $('chkSilent'),
   selTheme: $('selTheme'),
   selLang: $('selLang'),
@@ -441,6 +442,7 @@ function loadConfigIntoForm(cfg) {
   els.chkAutoStart.checked = cfg.autoStartWithWindows;
   els.chkWatchdog.checked = cfg.watchdog !== false;
   els.chkCleanAnalysis.checked = cfg.cleanAnalysisSessions !== false;
+  els.chkAutoUpdateManager.checked = cfg.autoUpdateManager !== false;
   els.chkSilent.checked = !!cfg.minimizeToTrayOnStartup;
   els.selTheme.value = cfg.theme || 'system';
   els.selLang.value = cfg.language || 'system';
@@ -459,6 +461,7 @@ function collectConfig() {
     autoStartWithWindows: els.chkAutoStart.checked,
     watchdog: els.chkWatchdog.checked,
     cleanAnalysisSessions: els.chkCleanAnalysis.checked,
+    autoUpdateManager: els.chkAutoUpdateManager.checked,
     minimizeToTrayOnStartup: els.chkSilent.checked,
     theme: els.selTheme.value || 'system',
     language: els.selLang.value || 'system',
@@ -572,6 +575,7 @@ els.chkAutoCheck.addEventListener('change', saveConfig);
 els.chkAutoStart.addEventListener('change', saveConfig);
 els.chkWatchdog.addEventListener('change', saveConfig);
 els.chkCleanAnalysis.addEventListener('change', saveConfig);
+els.chkAutoUpdateManager.addEventListener('change', saveConfig);
 els.chkSilent.addEventListener('change', saveConfig);
 els.selTheme.addEventListener('change', () => { saveConfig(); applyTheme(els.selTheme.value); });
 els.selLang.addEventListener('change', () => {
