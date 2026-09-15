@@ -29,6 +29,7 @@
 2. **单实例锁的坑**：改了代码交付时，用户双击快捷方式只会唤醒**旧实例**（旧代码）→ "没有新功能"。交付前必须：`Get-Process electron | Stop-Process -Force`（taskkill 有时报 Access denied，Stop-Process 更稳；个别残留 crashpad_handler 可能杀不掉，占着旧目录句柄）。
 3. 未打包应用的路径约定：`process.execPath` = electron.exe；`app.getAppPath()` = 项目目录；桌面快捷方式 = `TargetPath=electron.exe` + `Arguments="<项目目录>"` + `Icon=assets\app.ico`。
 4. `shell.writeShortcutLink` 操作用 `'replace'`（不是 'create'，否则文件已存在会失败）。
+5. **`electron-builder.yml` 的 `files` 是白名单，漏列的源码目录会被静默丢掉**（本项目 `asar: false`，只拷白名单）。v1.0.5 就是这么发坏的：`lib/` 拆分后没加进 `files`，而 `main.js` 顶层 `require('./lib/pure')` → 装出来的应用一启动就 `Error: Cannot find module './lib/pure'`，**从发布到发现坏了 3 周多**。注意 `node_modules` 的生产依赖是被特殊处理、自动打进去的（所以 `electron-updater` 在、`lib/` 不在），别被这种不对称骗过去。**防线（已内置）**：`tools/check-package.js` 从入口递归跟踪相对 require，核对是否命中白名单（check.yml/release.yml 都跑）；`tools/after-pack.js` 挂在 electron-builder 的 `afterPack` 上，在**发布前**验真实产物，缺文件就中止发布。**教训：`node --check` 过了不代表装得起来 —— 只有对产物本身做核对才拦得住。**
 
 ## 四、dsh 集成坑
 

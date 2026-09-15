@@ -8,6 +8,8 @@ const {
   parseCimDate,
   releaseBodyToText,
   extractAnalysisJson,
+  splitLogChunk,
+  redactSecrets,
   npmItem,
   githubItem,
 } = require('../lib/pure');
@@ -117,4 +119,38 @@ test('npmItem / githubItem: field mapping', () => {
   assert.equal(g.stars, 5);
   assert.equal(g.url, 'https://github.com/o/r');
   assert.equal(g.updated, '2026-01-02');
+});
+
+test('splitLogChunk: 拆行、去行尾空白、丢空行', () => {
+  // 子进程 chunk 自带结尾换行，不处理会让日志每条之间多一个空行。
+  assert.deepEqual(splitLogChunk('added 12 packages\n'), ['added 12 packages']);
+  assert.deepEqual(splitLogChunk('a\r\nb\r\n'), ['a', 'b']);
+  assert.deepEqual(splitLogChunk('a\n\n\nb\n'), ['a', 'b']);
+  assert.deepEqual(splitLogChunk('trailing spaces   \n'), ['trailing spaces']);
+  assert.deepEqual(splitLogChunk(''), []);
+  assert.deepEqual(splitLogChunk(null), []);
+});
+
+test('redactSecrets: 打掉 dsh web 的 token 与各类密钥', () => {
+  assert.equal(
+    redactSecrets('dsh web: http://127.0.0.1:3080/?token=D6Ro5ABDCTv_K--yk08q'),
+    'dsh web: http://127.0.0.1:3080/?token=***');
+  assert.equal(redactSecrets('http://h/?token=x&other=keep'), 'http://h/?token=***&other=keep');
+  assert.equal(redactSecrets('DEEPSEEK_API_KEY=abc123xyz789'), 'DEEPSEEK_API_KEY=***');
+  assert.equal(redactSecrets('{\"token\": \"abcdef\", \"score\": 7}'),
+    '{\"token\": \"***\", \"score\": 7}');
+  assert.equal(redactSecrets('Authorization: Bearer eyJhbGci.abc'), 'Authorization: Bearer ***');
+  assert.equal(redactSecrets('key is sk-abc123def456'), 'key is sk-***');
+});
+
+test('redactSecrets: 不误伤正常日志', () => {
+  // 用量页的中文文案里有 tokens 字样，不能被打码规则吃掉。
+  for (const line of [
+    '总会话数 12，输出 tokens: 34567，缓存读取 tokens 890',
+    'dsh web: opening the default browser; pass --no-open to disable',
+    '已是最新版本（0.1.5-rc.2）。',
+    '[whale-balance] HTTP 余额接口请求失败: HTTP 401',
+  ]) {
+    assert.equal(redactSecrets(line), line);
+  }
 });

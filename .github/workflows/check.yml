@@ -23,3 +23,7 @@ jobs:
 
       - name: Unit tests (node:test)
         run: npm test
+
+      # 漏列 files 白名单不会有构建报错，但装出来一启动就 Cannot find module（v1.0.5 事故）。
+      - name: Packaging completeness (require vs electron-builder files)
+        run: node tools/check-package.js

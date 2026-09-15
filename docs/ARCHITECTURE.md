@@ -86,7 +86,8 @@ dsh-manager
   "minimizeToTrayOnStartup": false,
   "costInput": 2, "costCache": 0.5, "costOutput": 8,
   "watchdog": true, "theme": "system",
-  "cleanAnalysisSessions": true,
+  "updateChannel": "all", "autoUpdateManager": true,
+  "cleanAnalysisSessions": true, "language": "system",
   "windowBounds": {"x":..,"y":..,"width":..,"height":..},
   "rollbackVersion": null
 }

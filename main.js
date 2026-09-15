@@ -7,7 +7,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 
-const { compareVersions, parseCimDate, releaseBodyToText, extractAnalysisJson } = require('./lib/pure');
+const { compareVersions, parseVersion, parseCimDate, releaseBodyToText, extractAnalysisJson, splitLogChunk, redactSecrets } = require('./lib/pure');
 const market = require('./lib/market');
 
 // ---------------------------------------------------------------------------
@@ -43,6 +43,9 @@ const DEFAULT_CONFIG = {
   costCache: 0.5,
   costOutput: 8,
   // 行为
+  // 更新通道：'all' = 取所有 dist-tags 的最高版本（能发现挂在 next 上的 rc/alpha）；
+  // 'latest' = 只认 npm 的 latest 标签。默认沿用 'all'，但预发布版会在日志/通知里明确标注。
+  updateChannel: 'all',
   watchdog: true, // DSH 异常退出自动重启（守护）
   cleanAnalysisSessions: true, // 插件分析结束后清理分析会话目录（不影响 dsh web 会话）
   autoUpdateManager: true, // 打包版自动检查并下载管理器自身更新（electron-updater）
@@ -73,6 +76,7 @@ const MAIN_TEXTS = {
     trayTooltipRunning: (n) => `DSH 管理器 — DSH 运行中（${n} 个进程）`,
     notifyUpdateTitle: 'DSH 有更新',
     notifyUpdateBody: (v) => `发现新版本 ${v}，可一键更新。`,
+    notifyUpdateBodyPre: (v) => `发现预发布版 ${v}，可一键更新（预发布版可能不稳定）。`,
     notifyUpdatedTitle: '更新完成',
     notifyUpdatedBody: (v) => `DSH 已更新到 ${v}`,
     notifyRollbackTitle: '回滚完成',
@@ -96,6 +100,7 @@ const MAIN_TEXTS = {
     trayTooltipRunning: (n) => `DSH Manager — DSH running (${n} processes)`,
     notifyUpdateTitle: 'DSH Update Available',
     notifyUpdateBody: (v) => `Version ${v} is available for one-click update.`,
+    notifyUpdateBodyPre: (v) => `Prerelease ${v} is available for one-click update (prereleases may be unstable).`,
     notifyUpdatedTitle: 'Update Complete',
     notifyUpdatedBody: (v) => `DSH has been updated to ${v}`,
     notifyRollbackTitle: 'Rollback Complete',
@@ -143,6 +148,7 @@ let isQuitting = false;
 let autoCheckTimer = null;
 let stateTimer = null;
 let watchdogTimer = null;
+let logCleanupTimer = null;
 let watchdogRestarts = [];
 let wmiCache = { time: 0, procs: [] };
 let cpuSamples = new Map(); // pid -> { time(100ns), ts(ms) }
@@ -191,7 +197,8 @@ function logFilePath() {
 }
 
 function log(line) {
-  const text = `[${new Date().toLocaleTimeString('zh-CN', { hour12: false })}] ${line}`;
+  // 打码后再落盘/广播：dsh web 会把带 token 的地址打到 stdout，而日志留 7 天且可一键导出。
+  const text = `[${new Date().toLocaleTimeString('zh-CN', { hour12: false })}] ${redactSecrets(line)}`;
   try {
     fs.mkdirSync(logDir(), { recursive: true });
     fs.appendFileSync(logFilePath(), text + '\n', 'utf8');
@@ -199,6 +206,54 @@ function log(line) {
     // 日志写盘失败不致命。
   }
   broadcast('log', text);
+}
+
+// 子进程输出专用入口：拆行 + 连续重复折叠 + 每分钟条数上限。
+// 直接把 stdout chunk 丢给 log() 有两个问题：chunk 自带结尾换行会多出空行；
+// 出问题的插件会疯狂刷同一行（实测某插件余额接口 401，两分钟 60+ 条），把真正的消息冲走。
+const CHILD_REPEAT_FLUSH_MS = 5000;
+const CHILD_RATE_WINDOW_MS = 60000;
+const CHILD_RATE_MAX = 200;
+let childRepeat = { line: null, count: 0, timer: null };
+let childRate = { windowStart: 0, written: 0, suppressed: 0 };
+
+function flushChildRepeat() {
+  if (childRepeat.timer) {
+    clearTimeout(childRepeat.timer);
+    childRepeat.timer = null;
+  }
+  if (childRepeat.count > 0) {
+    const n = childRepeat.count;
+    childRepeat.count = 0;
+    log(`↑ 上一行重复 ${n} 次（已折叠）`);
+  }
+}
+
+function logChildOutput(chunk) {
+  for (const line of splitLogChunk(chunk)) {
+    // 连续重复：只计数，定时汇总成一行。
+    if (line === childRepeat.line) {
+      childRepeat.count++;
+      if (!childRepeat.timer) childRepeat.timer = setTimeout(flushChildRepeat, CHILD_REPEAT_FLUSH_MS);
+      continue;
+    }
+    flushChildRepeat();
+    childRepeat.line = line;
+
+    // 限频：同一分钟窗口内超过上限就先攒着，窗口结束时报一条汇总。
+    const now = Date.now();
+    if (now - childRate.windowStart > CHILD_RATE_WINDOW_MS) {
+      if (childRate.suppressed > 0) log(`（上一分钟另有 ${childRate.suppressed} 条子进程输出被限频抑制）`);
+      childRate = { windowStart: now, written: 0, suppressed: 0 };
+    }
+    if (childRate.written >= CHILD_RATE_MAX) {
+      childRate.suppressed++;
+      childRepeat.line = null; // 这行没真正写出去，别让后续的"重复 N 次"指向它
+      continue;
+    }
+    childRate.written++;
+    log(line);
+  }
 }
 
 // 把事件推送给所有存活窗口（主窗口 + 插件市场独立窗口）。
@@ -270,14 +325,18 @@ function loadCorePackages() {
   }
 }
 
-function latestVersionFor(pkgName) {
+function latestVersionFor(pkgName, channel) {
+  const ch = channel || config.updateChannel || 'all';
   return new Promise((resolve) => {
     try {
       exec(`npm view ${pkgName} dist-tags --json`, { windowsHide: true, timeout: 60000 }, (_err, stdout) => {
         try {
           const tags = JSON.parse(stdout || '{}');
+          // 'latest' 通道只认 npm 的 latest 标签；'all' 通道取所有标签里最高的
+          // （dsh 的 rc/alpha 惯例挂在 next 上，只读 latest 会漏报，见 docs/GOTCHAS.md）。
+          const candidates = ch === 'latest' ? [tags.latest] : Object.values(tags);
           let best = null;
-          for (const v of Object.values(tags)) {
+          for (const v of candidates) {
             const s = String(v || '').trim().replace(/^v/, '');
             if (!/^\d+\.\d+\.\d+/.test(s)) continue;
             if (!best || compareVersions(s, best) > 0) best = s;
@@ -670,7 +729,7 @@ async function installPlugin(name) {
   busy = 'plugin';
   sendState();
   log(`安装插件 ${pkgName}（dsh plugin --profile web add ${pkgName}）...`);
-  const code = await runPluginCommand(['add', pkgName], (s) => log(s));
+  const code = await runPluginCommand(['add', pkgName], logChildOutput);
   busy = null;
   sendState();
   if (code === 0) log(`插件 ${pkgName} 安装完成，重启 DSH 后生效。`);
@@ -685,7 +744,7 @@ async function removePlugin(name) {
   busy = 'plugin';
   sendState();
   log(`卸载插件 ${pkgName}（dsh plugin --profile web remove ${pkgName}）...`);
-  const code = await runPluginCommand(['remove', pkgName], (s) => log(s));
+  const code = await runPluginCommand(['remove', pkgName], logChildOutput);
   busy = null;
   sendState();
   if (code === 0) log(`插件 ${pkgName} 卸载完成，重启 DSH 后生效。`);
@@ -723,7 +782,7 @@ async function upgradePlugin(name) {
   busy = 'plugin';
   sendState();
   log(`升级插件 ${pkgName}（dsh plugin --profile web add ${pkgName}）...`);
-  const code = await runPluginCommand(['add', pkgName], (s) => log(s));
+  const code = await runPluginCommand(['add', pkgName], logChildOutput);
   busy = null;
   sendState();
   if (code === 0) log(`插件 ${pkgName} 升级完成，重启 DSH 后生效。`);
@@ -761,7 +820,7 @@ async function installGithubPlugin(owner, repo) {
     try { ensureAllowBuilds(info.pkgName); } catch (e) { log('allowBuilds 写入失败: ' + e.message); }
   }
   log(`安装 ${owner}/${repo}（dsh plugin --profile web add github:${owner}/${repo}）...`);
-  const code = await runPluginCommand(['add', `github:${owner}/${repo}`], (s) => log(s));
+  const code = await runPluginCommand(['add', `github:${owner}/${repo}`], logChildOutput);
   busy = null;
   sendState();
   if (code === 0) log(`插件 ${owner}/${repo} 安装完成，重启 DSH 后生效。`);
@@ -1119,7 +1178,7 @@ async function openDsh() {
 
   log('启动 DSH（dsh web）...');
   try {
-    await launchDsh((s) => log(s));
+    await launchDsh(logChildOutput);
   } catch (e) {
     log('启动失败: ' + e.message);
     sendState();
@@ -1159,9 +1218,14 @@ async function checkUpdates(silent = false) {
     if (current && latest) {
       if (compareVersions(latest, current) > 0) {
         result.hasUpdate = true;
-        log(`发现新版本 ${latest}（当前 ${current}）。`);
+        // 预发布版必须标注：'all' 通道会把 next 上的 alpha 也算进来，
+        // 不写明的话用户点一下"更新"就被静默带上了 alpha。
+        result.prerelease = parseVersion(latest).pre !== null;
+        log(`发现新版本 ${latest}${result.prerelease ? '（预发布版）' : ''}（当前 ${current}）。`);
         result.changelog = await fetchChangelog(latest);
-        if (silent) notify(uiText('notifyUpdateTitle'), uiText('notifyUpdateBody', latest));
+        if (silent) {
+          notify(uiText('notifyUpdateTitle'), uiText(result.prerelease ? 'notifyUpdateBodyPre' : 'notifyUpdateBody', latest));
+        }
       } else if (!silent) {
         log(`已是最新版本（${current}）。`);
       }
@@ -1187,7 +1251,7 @@ async function performInstall(version) {
   sendState();
   try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setProgressBar(2); } catch {}
   log(`开始安装 @deepseek-ai/dsh@${version}...`);
-  const code = await runInstall(version, (s) => log(s));
+  const code = await runInstall(version, logChildOutput);
   const newVersion = getInstalledVersion();
   latestVersion = null;
   changelogCache = { version: null, text: null };
@@ -1600,6 +1664,9 @@ if (!gotLock) {
     configureStateTimer();
     registerGlobalShortcuts();
     cleanupOldLogs();
+    // 托盘常驻应用可能连跑数周。只在启动时清一次等于"保留 7 天"形同虚设
+    // （实测 logs 目录里留着 11 天前的文件），所以再挂一个周期任务。
+    logCleanupTimer = setInterval(cleanupOldLogs, 6 * 3600 * 1000);
     setupAutoUpdater(); // 打包版自动检查管理器更新
 
     if (config.createDesktopShortcut) createShortcut(true);
@@ -1619,6 +1686,8 @@ if (!gotLock) {
       saveConfig();
     } catch {}
     try { if (watchdogTimer) clearInterval(watchdogTimer); } catch {}
+    try { if (logCleanupTimer) clearInterval(logCleanupTimer); } catch {}
+    try { flushChildRepeat(); } catch {}
   });
   app.on('will-quit', () => {
     try { globalShortcut.unregisterAll(); } catch {}

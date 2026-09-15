@@ -1,11 +1,14 @@
 appId: com.modred522.dsh-manager
 productName: DSH Manager
 asar: false
+# 打包后、发布前核对产物里被 require 的文件是否齐全（缺了就中止发布）。
+afterPack: tools/after-pack.js
 directories:
   output: release
 files:
   - main.js
   - preload.js
+  - lib/**
   - find-dsh.ps1
   - renderer/**
   - assets/whale.png

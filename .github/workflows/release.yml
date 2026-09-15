@@ -28,6 +28,9 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Packaging completeness (require vs electron-builder files)
+        run: node tools/check-package.js
+
       # 构建并发布：electron-builder 用 GH_TOKEN 上传 NSIS 安装器 + zip + latest.yml
       # 到 GitHub Release；若配置了 CSC_LINK/CSC_KEY_PASSWORD 则同时做代码签名。
       - name: Build, sign and publish

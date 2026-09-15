@@ -28,6 +28,7 @@ const els = {
   chkSilent: $('chkSilent'),
   selTheme: $('selTheme'),
   selLang: $('selLang'),
+  selUpdateChannel: $('selUpdateChannel'),
   btnRollback: $('btnRollback'),
   txtUrl: $('txtUrl'),
   txtInterval: $('txtInterval'),
@@ -446,6 +447,7 @@ function loadConfigIntoForm(cfg) {
   els.chkSilent.checked = !!cfg.minimizeToTrayOnStartup;
   els.selTheme.value = cfg.theme || 'system';
   els.selLang.value = cfg.language || 'system';
+  els.selUpdateChannel.value = cfg.updateChannel || 'all';
   els.txtUrl.value = cfg.dshUrl;
   els.txtInterval.value = cfg.autoCheckIntervalHours;
   els.priceInput.value = cfg.costInput;
@@ -465,6 +467,7 @@ function collectConfig() {
     minimizeToTrayOnStartup: els.chkSilent.checked,
     theme: els.selTheme.value || 'system',
     language: els.selLang.value || 'system',
+    updateChannel: els.selUpdateChannel.value || 'all',
     costInput: Math.max(0, Number(els.priceInput.value) || 0),
     costCache: Math.max(0, Number(els.priceCache.value) || 0),
     costOutput: Math.max(0, Number(els.priceOutput.value) || 0),
@@ -496,7 +499,9 @@ function saveConfig() {
 
 // ---------------- 弹窗 ----------------
 function showUpdateModal(latest, text) {
-  els.updateVersion.textContent = 'v' + latest;
+  // 预发布版在弹窗里点明：用户就是在这里按"立即更新"的，别让 alpha 混进来还不吭声。
+  const isPre = /^\d+\.\d+\.\d+-/.test(String(latest || ''));
+  els.updateVersion.textContent = 'v' + latest + (isPre ? ' · ' + t('prereleaseTag') : '');
   els.changelog.textContent = text || t('changelogEmpty');
   els.modalUpdate.hidden = false;
 }
@@ -577,6 +582,7 @@ els.chkWatchdog.addEventListener('change', saveConfig);
 els.chkCleanAnalysis.addEventListener('change', saveConfig);
 els.chkAutoUpdateManager.addEventListener('change', saveConfig);
 els.chkSilent.addEventListener('change', saveConfig);
+els.selUpdateChannel.addEventListener('change', saveConfig);
 els.selTheme.addEventListener('change', () => { saveConfig(); applyTheme(els.selTheme.value); });
 els.selLang.addEventListener('change', () => {
   saveConfig();
