@@ -1,6 +1,6 @@
 # DSH 管理器 — Electron → Tauri 2 重构方案（待评审）
 
-> 状态：**阶段一已落地**（分支 `tauri`）。方案本身仍待评审，第七节那  6 个决策如有改动请直说。
+> 状态：**阶段一、阶段二已落地**（分支 `tauri`）。第七节 6 个决策按推荐默认值执行，如需改动请直说。
 > 所有 API 名称已对照 Tauri 2 官方文档核实。
 
 ## 一、结论
@@ -184,3 +184,64 @@ Rust 侧预计 2500–3500 行（类型和错误处理会比 JS 啰嗦）。
 阶段四：市场分页 + 双源、分析管线 + 评分卡 + 历史缓存。
 
 打包（`tauri build`）与体积实测留到阶段二做——按第八节的规矩，每阶段都要真打包、真启动一次。
+
+---
+
+## 十、阶段二落地记录
+
+### 本阶段新增的能力
+
+| 能力 | 说明 |
+|---|---|
+| 检查更新 / 更新 / 回滚 | `updates.rs` 查 npm dist-tags、拉官方 changelog、`npm install -g` 流式装；编排在 `lib.rs` |
+| 更新通道 | `all`（含预发布）/ `latest`（仅稳定），预发布版在日志与通知里都标注 |
+| 系统通知 | `tauri-plugin-notification`，发现新版 / 更新完成 / 回滚完成三处 |
+| 全局快捷键 | `tauri-plugin-global-shortcut`，`Ctrl+Alt+D` 唤起窗口并打开 DSH |
+| 开机自启 | `tauri-plugin-autostart`，设置页开关即时生效 |
+| **桌面快捷方式** | `shortcut.rs` 走 COM `IShellLink` + `IPersistFile`（硬骨头 1，按决策 2 选 COM） |
+| 导出日志 | `tauri-plugin-dialog` 的保存对话框 |
+| 任务栏进度 | 安装期间 `set_progress_bar(Indeterminate)` |
+| 定时检查 | 按 `autoCheckIntervalHours` 起定时器，改设置立即换代生效 |
+| 托盘菜单 | 补上「检查更新」「创建桌面快捷方式」 |
+| 崩溃兜底 | panic hook 写 `crash.log`，落在配置目录而不是安装目录（后者在 Program Files 下可能没写权限） |
+
+命令进度：**16 / 29 已接通**，剩 13 个（用量、插件、市场、分析）是阶段三、四的活。
+
+### 硬骨头 1 的结论
+
+COM 方案成立。`shortcut.rs` 约 60 行 unsafe，单测 `writes_a_real_lnk_file` 真写出一个 `.lnk`
+并校验文件头魔数（`4C 00 00 00`）—— 验的不是能不能编译，是有没有生成有效的快捷方式。
+于是 PowerShell 辅助脚本那条备选路彻底不需要，GOTCHAS 第一节那堆编码坑没被带进新架构。
+
+### 加了一道启动烟测
+
+`cargo test` 再全绿也不能证明 GUI 起得来（v1.0.5 的教训正在这里）。所以本阶段加了一道隔离启动烟测：
+用 `DSH_MANAGER_DATA` 把管理器数据目录指到临时位置、配置里关掉建快捷方式与自启，
+启动真实产物、确认进程活过启动阶段、检查有没有 `crash.log`，最后核对真实桌面与注册表没被动过。
+
+这道烟测立刻还本了，抓到两个东西：
+
+1. **一个真 bug**：自启本来就没开时调 `disable()`，插件会报「系统找不到指定的文件 (os error 2)」，
+   每次启动都往日志里刷一条看着像坏了的错误。已改成先查 `is_enabled()`、只在需要改变时才动手。
+2. **一个我自己挖的坑**：最初用重定向 `APPDATA` 来隔离，结果 `npm prefix -g` 跟着变了
+   （npm 的全局前缀默认就在 `%APPDATA%\npm`），管理器找不到已装的 dsh，报「无法获取版本信息」。
+   看着像产品 bug，其实是测试手法错了。为此给应用加了 `DSH_MANAGER_DATA` 覆盖变量
+   （只隔离管理器自己的数据，不碰 npm），这条教训也写进了 `config.rs` 的注释。
+
+### 阶段二验证结果
+
+- `cargo test` — **49 passed / 0 failed**
+- `cargo clippy --all-targets -- -D warnings` — 干净
+- `cargo fmt --check` — 干净
+- `tauri build` — NSIS 安装器产出正常
+- 启动烟测 — 进程存活、无 `crash.log`、真实桌面与注册表未被改动
+- 常驻内存实测 **约 40 MB**（Electron 版 150–250 MB）
+
+### 还没做
+
+阶段三：用量聚合（读 `session_projcache.json`）、插件增删升、插件更新检查。
+阶段四：市场独立窗口 + 双源分页、分析管线 + 评分卡 + 历史缓存。
+
+另外**决策 4（updater 迁移）仍待执行**：按推荐做法，需要先发一版过渡的 Electron 版把更新提示改成
+「请手动下载」，并保持 NSIS 的 appId/productName 不变让 Tauri 安装器能原地覆盖安装。
+这件事要在真正启用 `tauri-plugin-updater` 之前做掉。

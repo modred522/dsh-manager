@@ -9,7 +9,9 @@ pub mod dsh;
 pub mod logging;
 pub mod procs;
 pub mod pure;
+pub mod shortcut;
 pub mod texts;
+pub mod updates;
 
 use std::sync::Mutex;
 use std::time::Duration;
@@ -251,15 +253,27 @@ async fn set_config(app: AppHandle, cfg: serde_json::Value) -> Result<(), String
         serde_json::from_value::<Config>(base).map_err(|e| e.to_string())?
     };
 
-    let theme_changed = {
+    let (theme_changed, autostart_changed, interval_changed) = {
         let mut guard = st.config.lock().unwrap_or_else(|e| e.into_inner());
-        let changed = guard.theme != merged.theme;
+        let changes = (
+            guard.theme != merged.theme,
+            guard.auto_start_with_windows != merged.auto_start_with_windows,
+            guard.auto_check_on_startup != merged.auto_check_on_startup
+                || guard.auto_check_interval_hours != merged.auto_check_interval_hours,
+        );
         *guard = merged.clone();
-        changed
+        changes
     };
     config::save(&merged).map_err(|e| e.to_string())?;
     if theme_changed {
         apply_theme(&app, &merged.theme);
+    }
+    if autostart_changed {
+        apply_autostart(&app, merged.auto_start_with_windows);
+    }
+    if interval_changed {
+        // 间隔变了要重新起定时器，否则改了设置得重启才生效。
+        restart_auto_check_timer(&app, &merged);
     }
     send_state(&app).await;
     Ok(())
@@ -310,24 +324,242 @@ fn open_market(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-// --- 以下为后续阶段；先占位，免得前端调用直接炸 -------------------------------
+// --- 更新 / 回滚 --------------------------------------------------------------
+
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckResult {
+    current: Option<String>,
+    latest: Option<String>,
+    has_update: bool,
+    /// 预发布版必须标注：`all` 通道会把 next 上的 alpha 也算进来，
+    /// 不写明的话用户点一下"更新"就被静默带上了 alpha。
+    prerelease: bool,
+    changelog: Option<String>,
+}
+
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallResult {
+    ok: bool,
+    new_version: Option<String>,
+    reason: Option<String>,
+}
 
 #[tauri::command]
-fn check_updates() -> Result<serde_json::Value, String> {
-    Err(NOT_YET.into())
+async fn check_updates(app: AppHandle, silent: Option<bool>) -> CheckResult {
+    let silent = silent.unwrap_or(false);
+    if busy_get(&app).is_some() {
+        return CheckResult::default();
+    }
+    busy_set(&app, Some("check"));
+    send_state(&app).await;
+
+    let cfg = app.state::<AppState>().cfg();
+    let prefix = app.state::<AppState>().prefix();
+    let mut result = CheckResult {
+        current: dsh::installed_version(&prefix),
+        ..Default::default()
+    };
+
+    if !silent {
+        logging::log("正在检查更新...");
+    }
+    let latest = updates::latest_dsh_version(&cfg.update_channel).await;
+    {
+        let st = app.state::<AppState>();
+        *st.latest_version.lock().unwrap_or_else(|e| e.into_inner()) = latest.clone();
+        *st.last_check_time.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some(chrono::Local::now().to_rfc3339());
+    }
+    result.latest = latest.clone();
+
+    match (result.current.as_deref(), latest.as_deref()) {
+        (Some(current), Some(latest)) => {
+            if pure::compare_versions(latest, current) == std::cmp::Ordering::Greater {
+                result.has_update = true;
+                result.prerelease = pure::is_prerelease(latest);
+                logging::log(format!(
+                    "发现新版本 {latest}{}（当前 {current}）。",
+                    if result.prerelease {
+                        "（预发布版）"
+                    } else {
+                        ""
+                    }
+                ));
+                result.changelog = updates::fetch_changelog(latest).await;
+                if silent {
+                    notify(
+                        &app,
+                        &texts::t(&cfg.language, texts::Key::NotifyUpdateTitle),
+                        &texts::notify_update_body(&cfg.language, latest, result.prerelease),
+                    );
+                }
+            } else if !silent {
+                logging::log(format!("已是最新版本（{current}）。"));
+            }
+        }
+        _ => logging::log("检查更新失败：无法获取版本信息。"),
+    }
+
+    busy_set(&app, None);
+    send_state(&app).await;
+    result
 }
+
+/// 装一个指定版本（更新与回滚共用）：记运行态 → 停进程 → 任务栏进度 → 恢复。
+async fn perform_install(app: &AppHandle, version: &str) -> (InstallResult, bool) {
+    let cfg = app.state::<AppState>().cfg();
+    let port = config::dsh_port(&cfg);
+    let was_running = dsh::is_server_up(&cfg.dsh_url, Duration::from_millis(1500)).await
+        || !procs::dsh_processes(port).is_empty();
+
+    let stopped = procs::stop_processes(port, None);
+    if stopped > 0 {
+        logging::log(format!("安装前停止了 {stopped} 个 DSH 进程。"));
+    }
+    dsh::clear_child(true);
+
+    busy_set(app, Some("update"));
+    send_state(app).await;
+    set_progress(app, Some(ProgressKind::Indeterminate));
+
+    logging::log(format!("开始安装 @deepseek-ai/dsh@{version}..."));
+    let code = updates::run_install(version).await;
+
+    let prefix = app.state::<AppState>().prefix();
+    let new_version = dsh::installed_version(&prefix);
+    {
+        let st = app.state::<AppState>();
+        *st.latest_version.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+    updates::clear_changelog_cache();
+
+    set_progress(app, None);
+    busy_set(app, None);
+    send_state(app).await;
+
+    (
+        InstallResult {
+            ok: code == 0,
+            new_version,
+            reason: None,
+        },
+        was_running,
+    )
+}
+
 #[tauri::command]
-fn update() -> Result<serde_json::Value, String> {
-    Err(NOT_YET.into())
+async fn update(app: AppHandle) -> InstallResult {
+    if busy_get(&app).is_some() {
+        return InstallResult {
+            reason: Some("busy".into()),
+            ..Default::default()
+        };
+    }
+    let prefix = app.state::<AppState>().prefix();
+    let current = dsh::installed_version(&prefix);
+
+    let mut latest = app
+        .state::<AppState>()
+        .latest_version
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    if latest.is_none() {
+        latest = check_updates(app.clone(), Some(true)).await.latest;
+    }
+
+    let (Some(current), Some(latest)) = (current.as_deref(), latest.as_deref()) else {
+        logging::log("当前已是最新版本，无需更新。");
+        return InstallResult {
+            reason: Some("uptodate".into()),
+            ..Default::default()
+        };
+    };
+    if pure::compare_versions(latest, current) != std::cmp::Ordering::Greater {
+        logging::log("当前已是最新版本，无需更新。");
+        return InstallResult {
+            reason: Some("uptodate".into()),
+            ..Default::default()
+        };
+    }
+
+    let (r, was_running) = perform_install(&app, latest).await;
+    let cfg = app.state::<AppState>().cfg();
+    if r.ok {
+        // npm 安装是覆盖式的、没有内置回滚，所以自己记下旧版本号。
+        set_config_fields(&app, |c| c.rollback_version = Some(current.to_string()));
+        let shown = r.new_version.clone().unwrap_or_else(|| "未知".into());
+        logging::log(format!("更新完成，当前版本: {shown}"));
+        notify(
+            &app,
+            &texts::t(&cfg.language, texts::Key::NotifyUpdatedTitle),
+            &texts::notify_updated_body(&cfg.language, &shown),
+        );
+        if was_running {
+            logging::log("之前 DSH 在运行，自动重新启动...");
+            let _ = open_dsh(app.clone()).await;
+        }
+    } else {
+        logging::log("更新结束，请查看上方日志。");
+    }
+    r
 }
+
 #[tauri::command]
-fn rollback() -> Result<serde_json::Value, String> {
-    Err(NOT_YET.into())
+async fn rollback(app: AppHandle) -> InstallResult {
+    if busy_get(&app).is_some() {
+        return InstallResult {
+            reason: Some("busy".into()),
+            ..Default::default()
+        };
+    }
+    let cfg = app.state::<AppState>().cfg();
+    let Some(target) = cfg.rollback_version.clone() else {
+        return InstallResult {
+            reason: Some("no-target".into()),
+            ..Default::default()
+        };
+    };
+
+    logging::log(format!("回滚到 {target}..."));
+    let (r, was_running) = perform_install(&app, &target).await;
+    if r.ok {
+        set_config_fields(&app, |c| c.rollback_version = None);
+        let shown = r.new_version.clone().unwrap_or_else(|| target.clone());
+        logging::log(format!("回滚完成，当前版本: {shown}"));
+        notify(
+            &app,
+            &texts::t(&cfg.language, texts::Key::NotifyRollbackTitle),
+            &texts::notify_rollback_body(&cfg.language, &shown),
+        );
+        if was_running {
+            logging::log("之前 DSH 在运行，自动重新启动...");
+            let _ = open_dsh(app.clone()).await;
+        }
+    } else {
+        logging::log("回滚失败，请查看上方日志。");
+    }
+    r
 }
+
 #[tauri::command]
-fn get_changelog() -> Result<String, String> {
-    Err(NOT_YET.into())
+async fn get_changelog(app: AppHandle, version: Option<String>) -> Option<String> {
+    let v = match version {
+        Some(v) if !v.is_empty() => v,
+        _ => app
+            .state::<AppState>()
+            .latest_version
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()?,
+    };
+    updates::fetch_changelog(&v).await
 }
+
+// --- 以下为后续阶段；先占位，免得前端调用直接炸 -------------------------------
+
 #[tauri::command]
 fn get_usage() -> Result<serde_json::Value, String> {
     Err(NOT_YET.into())
@@ -380,18 +612,188 @@ fn plugin_analyze_stop() -> Result<(), String> {
 fn analysis_history() -> Result<serde_json::Value, String> {
     Err(NOT_YET.into())
 }
-#[tauri::command]
-fn export_log() -> Result<(), String> {
-    Err(NOT_YET.into())
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportResult {
+    ok: bool,
+    file_path: Option<String>,
+    error: Option<String>,
 }
+
 #[tauri::command]
-fn create_shortcut() -> Result<(), String> {
-    Err(NOT_YET.into())
+async fn export_log(app: AppHandle, text: Option<String>) -> ExportResult {
+    use tauri_plugin_dialog::DialogExt;
+
+    let default_name = format!(
+        "dsh-manager-log-{}.txt",
+        chrono::Local::now().format("%Y-%m-%d")
+    );
+    let picked = app
+        .dialog()
+        .file()
+        .set_title("导出日志")
+        .set_file_name(&default_name)
+        .add_filter("文本文件", &["txt", "log"])
+        .blocking_save_file();
+
+    let Some(path) = picked else {
+        return ExportResult::default(); // 用户取消
+    };
+    let Ok(path) = path.into_path() else {
+        return ExportResult {
+            error: Some("无法解析所选路径".into()),
+            ..Default::default()
+        };
+    };
+    match std::fs::write(&path, text.unwrap_or_default()) {
+        Ok(_) => ExportResult {
+            ok: true,
+            file_path: Some(path.to_string_lossy().into_owned()),
+            error: None,
+        },
+        Err(e) => ExportResult {
+            error: Some(e.to_string()),
+            ..Default::default()
+        },
+    }
+}
+
+#[tauri::command]
+fn create_shortcut(app: AppHandle) -> Result<(), String> {
+    make_shortcut(&app, false)
+}
+
+/// 建桌面快捷方式。`only_if_missing` 给启动时的自动补建用。
+fn make_shortcut(app: &AppHandle, only_if_missing: bool) -> Result<(), String> {
+    let desktop = app
+        .path()
+        .desktop_dir()
+        .map_err(|e| format!("取不到桌面目录: {e}"))?;
+    let exe = std::env::current_exe().map_err(|e| format!("取不到自身路径: {e}"))?;
+    // Windows 的快捷方式图标认 ICO；exe 自带的图标资源就来自 bundle.icon 里的 icon.ico。
+    match shortcut::create_desktop_shortcut(&desktop, &exe, &exe, only_if_missing) {
+        Ok(Some(path)) => {
+            logging::log(format!("已创建桌面快捷方式: {}", path.display()));
+            Ok(())
+        }
+        Ok(None) => Ok(()), // 已存在，跳过
+        Err(e) => {
+            logging::log(format!("创建快捷方式失败: {e}"));
+            Err(e)
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
 // 外壳：窗口、托盘、主题、定时器
 // ---------------------------------------------------------------------------
+
+fn busy_get(app: &AppHandle) -> Option<String> {
+    app.state::<AppState>()
+        .busy
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
+fn busy_set(app: &AppHandle, value: Option<&str>) {
+    *app.state::<AppState>()
+        .busy
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = value.map(|s| s.to_string());
+}
+
+/// 改几个配置字段并立刻落盘（内部调用用，不经过渲染层的 set_config）。
+fn set_config_fields(app: &AppHandle, f: impl FnOnce(&mut Config)) {
+    let st = app.state::<AppState>();
+    let snapshot = {
+        let mut guard = st.config.lock().unwrap_or_else(|e| e.into_inner());
+        f(&mut guard);
+        guard.clone()
+    };
+    let _ = config::save(&snapshot);
+}
+
+enum ProgressKind {
+    /// 不知道还要多久：任务栏显示滚动条（对应 Electron 的 setProgressBar(2)）。
+    Indeterminate,
+}
+
+fn set_progress(app: &AppHandle, kind: Option<ProgressKind>) {
+    use tauri::window::{ProgressBarState, ProgressBarStatus};
+    let state = match kind {
+        Some(ProgressKind::Indeterminate) => ProgressBarState {
+            status: Some(ProgressBarStatus::Indeterminate),
+            progress: None,
+        },
+        None => ProgressBarState {
+            status: Some(ProgressBarStatus::None),
+            progress: None,
+        },
+    };
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.set_progress_bar(state);
+    }
+}
+
+fn notify(app: &AppHandle, title: &str, body: &str) {
+    use tauri_plugin_notification::NotificationExt;
+    let _ = app.notification().builder().title(title).body(body).show();
+}
+
+/// 全局快捷键 Ctrl+Alt+D：唤起窗口并打开 DSH（实际动作在插件的 handler 里）。
+fn register_global_shortcut(app: &AppHandle) {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+    if let Err(e) = app.global_shortcut().register("CmdOrCtrl+Alt+D") {
+        // 被别的程序占用是常见情况，记一条日志就够，不影响主流程。
+        logging::log(format!("注册全局快捷键 Ctrl+Alt+D 失败: {e}"));
+    }
+}
+
+fn apply_autostart(app: &AppHandle, enabled: bool) {
+    use tauri_plugin_autostart::ManagerExt;
+    let mgr = app.autolaunch();
+
+    // 先查当前状态：对一个本来就不存在的自启项调 disable()，插件会报
+    // "系统找不到指定的文件 (os error 2)" —— 启动烟测里每次都刷这条，
+    // 看着像坏了其实没事。只在状态需要改变时才动手。
+    match mgr.is_enabled() {
+        Ok(current) if current == enabled => return,
+        Ok(_) => {}
+        Err(e) => {
+            // 查不到状态就按原样尝试设置，别因为查询失败就放弃。
+            logging::log(format!("读取开机自启状态失败（继续尝试设置）: {e}"));
+        }
+    }
+
+    let r = if enabled { mgr.enable() } else { mgr.disable() };
+    if let Err(e) = r {
+        logging::log(format!("设置开机自启失败: {e}"));
+    }
+}
+
+/// 自动检查更新的定时器代数。改间隔时递增，旧任务发现代数变了就自己退出
+/// —— 比持有 JoinHandle 去 abort 简单，且不会漏掉已经在 sleep 里的任务。
+static AUTO_CHECK_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn restart_auto_check_timer(app: &AppHandle, cfg: &Config) {
+    use std::sync::atomic::Ordering;
+    let generation = AUTO_CHECK_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    if !cfg.auto_check_on_startup || cfg.auto_check_interval_hours == 0 {
+        return;
+    }
+    let hours = cfg.auto_check_interval_hours;
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(hours * 3600)).await;
+            if AUTO_CHECK_GEN.load(Ordering::SeqCst) != generation {
+                return; // 已被新定时器取代
+            }
+            check_updates(app.clone(), Some(true)).await;
+        }
+    });
+}
 
 fn open_url(app: &AppHandle, url: &str) {
     use tauri_plugin_opener::OpenerExt;
@@ -488,6 +890,20 @@ fn build_tray(app: &AppHandle, cfg: &Config) -> tauri::Result<()> {
         true,
         None::<&str>,
     )?;
+    let check = MenuItem::with_id(
+        app,
+        "check",
+        texts::t(lang, texts::Key::TrayCheck),
+        true,
+        None::<&str>,
+    )?;
+    let shortcut_item = MenuItem::with_id(
+        app,
+        "shortcut",
+        texts::t(lang, texts::Key::TrayShortcut),
+        true,
+        None::<&str>,
+    )?;
     let quit = MenuItem::with_id(
         app,
         "quit",
@@ -495,7 +911,18 @@ fn build_tray(app: &AppHandle, cfg: &Config) -> tauri::Result<()> {
         true,
         None::<&str>,
     )?;
-    let menu = Menu::with_items(app, &[&open, &open_dsh_i, &restart, &stop, &quit])?;
+    let menu = Menu::with_items(
+        app,
+        &[
+            &open,
+            &open_dsh_i,
+            &restart,
+            &stop,
+            &check,
+            &shortcut_item,
+            &quit,
+        ],
+    )?;
 
     TrayIconBuilder::with_id("main")
         .icon(
@@ -524,6 +951,14 @@ fn build_tray(app: &AppHandle, cfg: &Config) -> tauri::Result<()> {
                     tauri::async_runtime::spawn(async move {
                         stop_dsh(app, None).await;
                     });
+                }
+                "check" => {
+                    tauri::async_runtime::spawn(async move {
+                        check_updates(app, Some(false)).await;
+                    });
+                }
+                "shortcut" => {
+                    let _ = make_shortcut(&app, false);
                 }
                 "quit" => {
                     logging::flush_child_repeat();
@@ -643,6 +1078,28 @@ pub fn run() {
 
     builder
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            // 打包版 exe 本身就是应用，自启不需要额外参数。
+            None,
+        ))
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    // 只在按下时响应，否则一次按键会触发两遍。
+                    if event.state() != tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        return;
+                    }
+                    let app = app.clone();
+                    show_main_window(&app);
+                    tauri::async_runtime::spawn(async move {
+                        let _ = open_dsh(app).await;
+                    });
+                })
+                .build(),
+        )
         .manage(AppState::new(cfg.clone()))
         .invoke_handler(tauri::generate_handler![
             get_state,
@@ -655,11 +1112,13 @@ pub fn run() {
             open_npm_dir,
             open_external,
             open_market,
-            // 后续阶段占位
             check_updates,
             update,
             rollback,
             get_changelog,
+            export_log,
+            create_shortcut,
+            // 后续阶段占位
             get_usage,
             get_plugins,
             check_plugin_updates,
@@ -673,8 +1132,6 @@ pub fn run() {
             plugin_analyze,
             plugin_analyze_stop,
             analysis_history,
-            export_log,
-            create_shortcut,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -684,9 +1141,16 @@ pub fn run() {
             create_main_window(&handle, &cfg)?;
             build_tray(&handle, &cfg)?;
             apply_theme(&handle, &cfg.theme);
+            apply_autostart(&handle, cfg.auto_start_with_windows);
+            register_global_shortcut(&handle);
+            if cfg.create_desktop_shortcut {
+                let _ = make_shortcut(&handle, true);
+            }
 
-            // npm 前缀要起子进程解析，别卡住启动。
+            // npm 前缀要起子进程解析，别卡住启动。启动时的自动检查也挂在它后面，
+            // 因为查版本要用到这个前缀。
             let h = handle.clone();
+            let auto_check = cfg.auto_check_on_startup;
             tauri::async_runtime::spawn(async move {
                 let prefix = dsh::resolve_npm_prefix().await;
                 if prefix.is_empty() {
@@ -700,11 +1164,15 @@ pub fn run() {
                         .unwrap_or_else(|e| e.into_inner()) = prefix;
                 }
                 send_state(&h).await;
+                if auto_check {
+                    check_updates(h.clone(), Some(true)).await;
+                }
             });
 
             spawn_state_timer(handle.clone());
             spawn_log_cleanup_timer();
             spawn_watchdog(handle.clone());
+            restart_auto_check_timer(&handle, &cfg);
             Ok(())
         })
         .on_window_event(|win, event| {

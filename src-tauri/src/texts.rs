@@ -19,6 +19,8 @@ pub enum Key {
     TrayQuit,
     TrayTooltip,
     NotifyUpdateTitle,
+    NotifyUpdatedTitle,
+    NotifyRollbackTitle,
 }
 
 /// 解析界面语言：`system` 时跟随系统（非中文环境用英文）。
@@ -69,8 +71,40 @@ pub fn t(lang: &str, key: Key) -> String {
         (Key::TrayTooltip, false) => "DSH Manager (Ctrl+Alt+D opens DSH)",
         (Key::NotifyUpdateTitle, true) => "DSH 有更新",
         (Key::NotifyUpdateTitle, false) => "DSH Update Available",
+        (Key::NotifyUpdatedTitle, true) => "更新完成",
+        (Key::NotifyUpdatedTitle, false) => "Update Complete",
+        (Key::NotifyRollbackTitle, true) => "回滚完成",
+        (Key::NotifyRollbackTitle, false) => "Rollback Complete",
     }
     .to_string()
+}
+
+/// 发现新版本的通知正文。预发布版单独一句，别让用户被静默带上 alpha。
+pub fn notify_update_body(lang: &str, version: &str, prerelease: bool) -> String {
+    match (resolve(lang) == "zh", prerelease) {
+        (true, true) => format!("发现预发布版 {version}，可一键更新（预发布版可能不稳定）。"),
+        (true, false) => format!("发现新版本 {version}，可一键更新。"),
+        (false, true) => format!(
+            "Prerelease {version} is available for one-click update (prereleases may be unstable)."
+        ),
+        (false, false) => format!("Version {version} is available for one-click update."),
+    }
+}
+
+pub fn notify_updated_body(lang: &str, version: &str) -> String {
+    if resolve(lang) == "zh" {
+        format!("DSH 已更新到 {version}")
+    } else {
+        format!("DSH has been updated to {version}")
+    }
+}
+
+pub fn notify_rollback_body(lang: &str, version: &str) -> String {
+    if resolve(lang) == "zh" {
+        format!("DSH 已回滚到 {version}")
+    } else {
+        format!("DSH has been rolled back to {version}")
+    }
 }
 
 pub fn tray_tooltip_running(lang: &str, n: usize) -> String {
@@ -114,6 +148,18 @@ mod tests {
     }
 
     #[test]
+    fn notify_bodies_mark_prerelease() {
+        let pre = notify_update_body("zh", "0.1.6-alpha.1", true);
+        assert!(pre.contains("预发布"), "预发布版必须标注: {pre}");
+        assert!(pre.contains("0.1.6-alpha.1"));
+        let normal = notify_update_body("zh", "0.2.0", false);
+        assert!(!normal.contains("预发布"), "正式版不该标预发布: {normal}");
+        assert!(notify_update_body("en", "0.1.6-alpha.1", true).contains("Prerelease"));
+        assert!(notify_updated_body("zh", "0.2.0").contains("0.2.0"));
+        assert!(notify_rollback_body("en", "0.1.9").contains("rolled back"));
+    }
+
+    #[test]
     fn every_key_has_both_languages() {
         for key in [
             Key::AppTitle,
@@ -127,6 +173,8 @@ mod tests {
             Key::TrayQuit,
             Key::TrayTooltip,
             Key::NotifyUpdateTitle,
+            Key::NotifyUpdatedTitle,
+            Key::NotifyRollbackTitle,
         ] {
             assert!(!t("zh", key).is_empty(), "缺中文: {key:?}");
             assert!(!t("en", key).is_empty(), "缺英文: {key:?}");

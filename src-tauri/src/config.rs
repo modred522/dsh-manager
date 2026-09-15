@@ -83,10 +83,34 @@ impl Default for Config {
     }
 }
 
+/// 配置目录覆盖（受限环境 / 烟测用）。
+///
+/// 存在的意义：不能靠重定向 `APPDATA` 来隔离测试环境 —— npm 的全局前缀默认就是
+/// `%APPDATA%\npm`，一改 `APPDATA`，`npm prefix -g` 就跟着变，管理器会找不到已装的
+/// dsh 并报「无法获取版本信息」。所以隔离必须只针对管理器自己的数据目录。
+/// （Electron 版的 `DSH_USER_DATA` 是同一类逃生口。）
+pub const CONFIG_DIR_ENV: &str = "DSH_MANAGER_DATA";
+
 /// `%APPDATA%\DshManager`（与 Electron 版同一个目录）。
 pub fn config_dir() -> PathBuf {
-    let base = std::env::var("APPDATA").unwrap_or_default();
-    PathBuf::from(base).join("DshManager")
+    resolve_config_dir(
+        std::env::var_os(CONFIG_DIR_ENV).as_deref(),
+        std::env::var_os("APPDATA").as_deref(),
+    )
+}
+
+/// 目录解析逻辑单独抽出来：这样单测不必去改进程级环境变量
+/// （Rust 测试默认并行跑，改全局环境变量会互相干扰）。
+fn resolve_config_dir(
+    override_dir: Option<&std::ffi::OsStr>,
+    appdata: Option<&std::ffi::OsStr>,
+) -> PathBuf {
+    if let Some(dir) = override_dir {
+        if !dir.is_empty() {
+            return PathBuf::from(dir);
+        }
+    }
+    PathBuf::from(appdata.unwrap_or_default()).join("DshManager")
 }
 
 pub fn config_path() -> PathBuf {
@@ -203,6 +227,29 @@ mod tests {
     fn broken_json_does_not_panic() {
         let cfg: Config = serde_json::from_str("{not json").unwrap_or_default();
         assert_eq!(cfg.update_channel, "all");
+    }
+
+    #[test]
+    fn config_dir_prefers_override_then_appdata() {
+        use std::ffi::OsStr;
+        let probe = OsStr::new("D:/tmp/probe");
+        let appdata = OsStr::new("C:/Users/x/AppData/Roaming");
+
+        // 覆盖变量优先。
+        assert_eq!(
+            resolve_config_dir(Some(probe), Some(appdata)),
+            PathBuf::from(probe)
+        );
+        // 没有覆盖时落到 %APPDATA%\DshManager。
+        assert_eq!(
+            resolve_config_dir(None, Some(appdata)),
+            PathBuf::from(appdata).join("DshManager")
+        );
+        // 空字符串视为没设置（避免 set 了个空值就把数据写到盘根）。
+        assert_eq!(
+            resolve_config_dir(Some(OsStr::new("")), Some(appdata)),
+            PathBuf::from(appdata).join("DshManager")
+        );
     }
 
     #[test]
