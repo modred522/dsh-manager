@@ -1,17 +1,22 @@
-//! DSH 管理器 — Tauri 版主模块（阶段一：状态 / 启停 / 托盘 / 日志）。
+//! DSH 管理器 — Tauri 版主模块。
 //!
-//! 与 Electron 版的对应关系见 `docs/TAURI-MIGRATION.md`。阶段一刻意保持
+//! 已完成：状态/启停/托盘/日志（阶段一）、更新回滚/通知/快捷键/自启/快捷方式（阶段二）、
+//! 用量统计/插件管理（阶段三）。待做：市场与分析（阶段四）。
+//!
+//! 与 Electron 版的对应关系见 `docs/TAURI-MIGRATION.md`。整个迁移刻意保持
 //! **渲染层零改动**：`renderer/tauri-bridge.js` 把 `window.dsh.*` 映射到
 //! Tauri 的 `invoke`/`listen`，所以 `renderer.js` / `market.js` 不用动。
 
 pub mod config;
 pub mod dsh;
 pub mod logging;
+pub mod plugins;
 pub mod procs;
 pub mod pure;
 pub mod shortcut;
 pub mod texts;
 pub mod updates;
+pub mod usage;
 
 use std::sync::Mutex;
 use std::time::Duration;
@@ -561,29 +566,118 @@ async fn get_changelog(app: AppHandle, version: Option<String>) -> Option<String
 // --- 以下为后续阶段；先占位，免得前端调用直接炸 -------------------------------
 
 #[tauri::command]
-fn get_usage() -> Result<serde_json::Value, String> {
-    Err(NOT_YET.into())
+fn get_usage() -> usage::Usage {
+    usage::get_usage()
 }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginList {
+    plugins: Vec<plugins::Plugin>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginUpdateList {
+    plugins: Vec<plugins::PluginUpdate>,
+}
+
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginResult {
+    ok: bool,
+    error: Option<String>,
+}
+
 #[tauri::command]
-fn get_plugins() -> Result<serde_json::Value, String> {
-    Err(NOT_YET.into())
+fn get_plugins() -> PluginList {
+    PluginList {
+        plugins: plugins::profile_plugins(),
+    }
 }
+
 #[tauri::command]
-fn check_plugin_updates() -> Result<serde_json::Value, String> {
-    Err(NOT_YET.into())
+async fn check_plugin_updates(app: AppHandle) -> PluginUpdateList {
+    let cfg = app.state::<AppState>().cfg();
+    PluginUpdateList {
+        plugins: plugins::check_updates(&cfg.update_channel).await,
+    }
 }
+
+/// 装 / 卸 / 升级三个动作只差一个命令和几句文案，共用同一条流程。
+enum PluginAction {
+    Install,
+    Remove,
+    Upgrade,
+}
+
+async fn run_plugin_action(
+    app: &AppHandle,
+    action: PluginAction,
+    name: Option<String>,
+) -> PluginResult {
+    let pkg = name.unwrap_or_default().trim().to_string();
+    if pkg.is_empty() {
+        return PluginResult {
+            ok: false,
+            error: Some("包名不能为空".into()),
+        };
+    }
+    if busy_get(app).is_some() {
+        return PluginResult {
+            ok: false,
+            error: Some("有操作正在进行".into()),
+        };
+    }
+
+    // 升级就是重新 add（dsh plugin add 会装到最新版本）。
+    let (verb, sub) = match action {
+        PluginAction::Install => ("安装", "add"),
+        PluginAction::Remove => ("卸载", "remove"),
+        PluginAction::Upgrade => ("升级", "add"),
+    };
+
+    busy_set(app, Some("plugin"));
+    send_state(app).await;
+    logging::log(format!(
+        "{verb}插件 {pkg}（dsh plugin --profile web {sub} {pkg}）..."
+    ));
+    let code = plugins::run_plugin_command(&[sub, &pkg]).await;
+    busy_set(app, None);
+    send_state(app).await;
+
+    if code == 0 {
+        logging::log(format!("插件 {pkg} {verb}完成，重启 DSH 后生效。"));
+        PluginResult {
+            ok: true,
+            error: None,
+        }
+    } else {
+        logging::log(format!(
+            "插件 {pkg} {verb}失败（退出码 {code}），见上方日志。"
+        ));
+        PluginResult {
+            ok: false,
+            error: Some(format!("退出码 {code}")),
+        }
+    }
+}
+
 #[tauri::command]
-fn install_plugin() -> Result<serde_json::Value, String> {
-    Err(NOT_YET.into())
+async fn install_plugin(app: AppHandle, name: Option<String>) -> PluginResult {
+    run_plugin_action(&app, PluginAction::Install, name).await
 }
+
 #[tauri::command]
-fn remove_plugin() -> Result<serde_json::Value, String> {
-    Err(NOT_YET.into())
+async fn remove_plugin(app: AppHandle, name: Option<String>) -> PluginResult {
+    run_plugin_action(&app, PluginAction::Remove, name).await
 }
+
 #[tauri::command]
-fn upgrade_plugin() -> Result<serde_json::Value, String> {
-    Err(NOT_YET.into())
+async fn upgrade_plugin(app: AppHandle, name: Option<String>) -> PluginResult {
+    run_plugin_action(&app, PluginAction::Upgrade, name).await
 }
+
 #[tauri::command]
 fn market_search() -> Result<serde_json::Value, String> {
     Err(NOT_YET.into())
@@ -1118,13 +1212,13 @@ pub fn run() {
             get_changelog,
             export_log,
             create_shortcut,
-            // 后续阶段占位
             get_usage,
             get_plugins,
             check_plugin_updates,
             install_plugin,
             remove_plugin,
             upgrade_plugin,
+            // 后续阶段占位
             market_search,
             plugin_info,
             github_plugin_info,

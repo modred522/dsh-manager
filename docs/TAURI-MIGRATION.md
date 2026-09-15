@@ -1,6 +1,6 @@
 # DSH 管理器 — Electron → Tauri 2 重构方案（待评审）
 
-> 状态：**阶段一、阶段二已落地**（分支 `tauri`）。第七节 6 个决策按推荐默认值执行，如需改动请直说。
+> 状态：**阶段一～三已落地**（分支 `tauri`）。第七节 6 个决策按推荐默认值执行，如需改动请直说。
 > 所有 API 名称已对照 Tauri 2 官方文档核实。
 
 ## 一、结论
@@ -245,3 +245,48 @@ COM 方案成立。`shortcut.rs` 约 60 行 unsafe，单测 `writes_a_real_lnk_f
 另外**决策 4（updater 迁移）仍待执行**：按推荐做法，需要先发一版过渡的 Electron 版把更新提示改成
 「请手动下载」，并保持 NSIS 的 appId/productName 不变让 Tauri 安装器能原地覆盖安装。
 这件事要在真正启用 `tauri-plugin-updater` 之前做掉。
+
+---
+
+## 十一、阶段三落地记录
+
+### 本阶段新增的能力
+
+| 能力 | 实现 |
+|---|---|
+| Token 用量统计 | `usage.rs`：读 `$DSH_HOME/storages/session_projcache.json`，聚合总量 / 按项目 / 近 14 天 |
+| 已安装插件列表 | `plugins.rs`：读 web profile 的 `package.json` dependencies |
+| 插件装 / 卸 / 升级 | `dsh plugin --profile web add\|remove`，输出流式进日志 |
+| 插件可升级检查 | 逐个查 npm dist-tags；github/git/本地来源标 `updatable: false` 跳过 |
+
+命令进度：**22 / 29 已接通**，剩 7 个（市场 4 个 + 分析 3 个）是阶段四的活。
+
+### 移植时又抓到一个 Electron 版的 bug
+
+`getUsage()` 读的是 `rows.listMeta.val.lastPromptAt`，但真实数据里这个键叫
+**`rows.sessionListMetadata.val.lastPromptAt`** —— `listMeta` 根本不存在。
+于是 `lastPromptAt` 永远取不到，一路回退到 `identity.createdAt`：
+**「近 14 天趋势」一直是按会话创建时间分桶，而不是最后活动时间。**
+
+跨天使用的会话会被算到错误的那一天。`docs/ARCHITECTURE.md` 里也照抄了这个错键名。
+
+Tauri 版按真实键名读，并保留对 `createdAt` 的回退（空白会话的 `lastPromptAt` 是 `null`）。
+**Electron 侧这个 bug 还在**，是 `main.js` 里一行的事，但 1.0.6 已经打好等发，所以没顺手改——
+要不要搭这班车由你定。
+
+### 顺手做的两处加固
+
+- **项目排行加了稳定次序**：原实现只按体量降序，体量相同时顺序取决于 `Object.values()`
+  的遍历顺序。Rust 的 `HashMap` 遍历顺序是随机化的，直译过来会让列表每次刷新都跳，
+  所以同量时按名字定序。
+- **加了序列化契约测试**：`usage.rs` / `plugins.rs` 各有一个 `wire_format` 测试，
+  断言序列化出来的键名正是 `renderer.js` 取的那些（`uncachedInput`、`hasUpdate` …）。
+  「渲染层零改动」这个前提全靠字段名精确一致，一旦哪天改了 struct 字段名，
+  用量页会静默显示 0 而不是报错——这种静默失效必须有测试拦着。
+
+### 阶段三验证结果
+
+- `cargo test` — **60 passed / 0 failed**
+- `cargo clippy --all-targets -- -D warnings` — 干净
+- `cargo fmt --check` — 干净
+- `tauri build` + 启动烟测 — 通过，未改动真实桌面与注册表
