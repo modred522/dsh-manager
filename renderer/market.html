@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost" />
   <title>DSH Plugin Marketplace</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -11,7 +11,7 @@
   <div id="viewMarket" class="market-window">
     <header class="card market-win-head">
       <div class="header-left">
-        <img class="logo" src="../assets/whale.png" alt="whale" />
+        <img class="logo" src="whale.png" alt="whale" />
         <div class="header-text">
           <h1 data-i18n="marketTitle">插件市场</h1>
           <p data-i18n="marketSub">npm / GitHub 双源搜索 · 详情 · 一键分析</p>
@@ -79,6 +79,7 @@
   <!-- Toast 容器 -->
   <div id="toasts" class="toasts"></div>
 
+  <script src="tauri-bridge.js"></script>
   <script src="i18n.js"></script>
   <script src="market.js"></script>
 </body>

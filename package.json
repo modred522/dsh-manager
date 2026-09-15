@@ -5,7 +5,10 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "test": "node --test --test-isolation=none"
+    "test": "node --test --test-isolation=none",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
   },
   "author": "",
   "license": "MIT",
@@ -21,6 +24,7 @@
     "electron-updater": "^6.3.9"
   },
   "devDependencies": {
-    "electron": "^43.4.0"
+    "electron": "^43.4.0",
+    "@tauri-apps/cli": "^2"
   }
-}
+}

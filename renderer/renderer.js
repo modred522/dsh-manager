@@ -513,12 +513,13 @@ function hideUpdateModal() {
 function showAbout(s) {
   els.aboutBody.innerHTML = '';
   const info = s.appInfo || {};
+  // 运行时几项由后端给出名称（Electron/Node.js/Chromium 或 Tauri/Rust/WebView2）——
+  // 都是专有名词，不需要 i18n，这样同一份渲染层能同时服务两种后端。
+  const runtime = Array.isArray(info.runtime) ? info.runtime : [];
   const rows = [
     [t('aboutAppVersion'), info.appVersion],
     [t('aboutDshVersion'), s.installedVersion],
-    [t('aboutElectron'), info.electronVersion],
-    [t('aboutNode'), info.nodeVersion],
-    [t('aboutChromium'), info.chromeVersion],
+    ...runtime.map((r) => [r.name, r.version]),
   ];
   for (const [k, v] of rows) {
     const r = el('div', 'about-row');

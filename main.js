@@ -1158,9 +1158,13 @@ function notify(title, body) {
 function appInfo() {
   return {
     appVersion: (() => { try { return app.getVersion(); } catch { return '?'; } })(),
-    electronVersion: process.versions.electron || '',
-    nodeVersion: process.versions.node || '',
-    chromeVersion: process.versions.chrome || '',
+    // 运行时名称由后端给出（Tauri 版会换成 Tauri/Rust/WebView2），
+    // 渲染层直接照着渲染，不再写死 Electron 三件套。
+    runtime: [
+      { name: 'Electron', version: process.versions.electron || '' },
+      { name: 'Node.js', version: process.versions.node || '' },
+      { name: 'Chromium', version: process.versions.chrome || '' },
+    ],
   };
 }
 

@@ -57,7 +57,6 @@ const I18N = {
     btnUpdateNow: '立即更新', btnUpdateLater: '稍后再说', changelogEmpty: '（未获取到更新说明）',
     // about modal
     aboutTitle: '关于 DSH 管理器', aboutAppVersion: '管理器版本', aboutDshVersion: 'DSH 版本',
-    aboutElectron: 'Electron', aboutNode: 'Node.js', aboutChromium: 'Chromium',
     aboutTip: '全局快捷键 Ctrl+Alt+D：快速打开 DSH', btnOk: '知道了',
     // toast texts
     toastRestarting: '正在重启 DSH…',
@@ -147,7 +146,6 @@ const I18N = {
     updateModalTitle: 'New Version Available', updateModalSub: 'Release notes (from the official release)',
     btnUpdateNow: 'Update Now', btnUpdateLater: 'Later', changelogEmpty: '(no release notes)',
     aboutTitle: 'About DSH Manager', aboutAppVersion: 'Manager Version', aboutDshVersion: 'DSH Version',
-    aboutElectron: 'Electron', aboutNode: 'Node.js', aboutChromium: 'Chromium',
     aboutTip: 'Global shortcut Ctrl+Alt+D: open DSH quickly', btnOk: 'OK',
     toastRestarting: 'Restarting DSH…',
     toastStoppedProc: (n) => `Process ${n} stopped`, toastProcGone: (n) => `Process ${n} no longer exists`,
