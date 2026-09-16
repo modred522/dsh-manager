@@ -31,6 +31,9 @@ if (process.env.DSH_USER_DATA) {
 // ---------------------------------------------------------------------------
 // 常量与全局状态
 // ---------------------------------------------------------------------------
+// 管理器新版本的下载页（过渡期提示用）。
+const RELEASES_URL = 'https://github.com/modred522/dsh-manager/releases';
+
 const DEFAULT_CONFIG = {
   dshUrl: 'http://127.0.0.1:3080',
   autoCheckOnStartup: true,
@@ -83,6 +86,8 @@ const MAIN_TEXTS = {
     notifyRollbackBody: (v) => `DSH 已回滚到 ${v}`,
     mgrUpdateReadyTitle: '管理器更新已就绪',
     mgrUpdateReadyBody: (v) => `DSH 管理器新版本 v${v} 已下载完成，重启后生效。`,
+    mgrManualUpdateTitle: '管理器需手动更新',
+    mgrManualUpdateBody: '新版本已改为手动安装，请到 GitHub Releases 页面下载。',
     mgrUpdateRestart: '立即重启',
     mgrUpdateLater: '稍后',
   },
@@ -107,6 +112,8 @@ const MAIN_TEXTS = {
     notifyRollbackBody: (v) => `DSH has been rolled back to ${v}`,
     mgrUpdateReadyTitle: 'Manager Update Ready',
     mgrUpdateReadyBody: (v) => `DSH Manager v${v} has been downloaded and will apply on restart.`,
+    mgrManualUpdateTitle: 'Manual Update Required',
+    mgrManualUpdateBody: 'New versions are installed manually now. Please download from the GitHub Releases page.',
     mgrUpdateRestart: 'Restart Now',
     mgrUpdateLater: 'Later',
   },
@@ -631,7 +638,11 @@ function getUsage() {
       const rows = entry.rows || {};
       const totals = (rows.tokenUsage && rows.tokenUsage.val && rows.tokenUsage.val.totals) || {};
       const cwd = identity.cwd || '';
-      const lastPromptAt = (rows.listMeta && rows.listMeta.val && rows.listMeta.val.lastPromptAt) || identity.createdAt || 0;
+      // 键名是 sessionListMetadata，不是 listMeta —— 早先写错导致 lastPromptAt 永远取不到，
+      // 一路回退到 createdAt，「近 14 天趋势」就变成按会话创建时间分桶而不是最后活动时间。
+      // 空白会话的 lastPromptAt 确实是 null，所以对 createdAt 的回退仍然必要。
+      const listMeta = rows.sessionListMetadata && rows.sessionListMetadata.val;
+      const lastPromptAt = (listMeta && listMeta.lastPromptAt) || identity.createdAt || 0;
       const t = {
         uncachedInput: Number(totals.uncachedInputTokens) || 0,
         cacheRead: Number(totals.cacheReadTokens) || 0,
@@ -1475,7 +1486,17 @@ function setupAutoUpdater() {
   }
   updater.autoDownload = true;
   updater.autoInstallOnAppQuit = true;
-  updater.on('error', (e) => log('管理器更新出错: ' + ((e && e.message) || e)));
+  updater.on('error', (e) => {
+    const msg = String((e && e.message) || e);
+    log('管理器更新出错: ' + msg);
+    // 过渡期说明：管理器正在从 Electron 迁到 Tauri，新版发行物不再带
+    // electron-updater 需要的 latest.yml，所以这里会稳定地 404。
+    // 光打一句 "更新出错" 用户看不懂，得告诉他去哪拿新版。
+    if (/latest\.yml|404|Cannot find|ENOTFOUND|no such file/i.test(msg)) {
+      log('管理器新版本已改为手动安装：请到 ' + RELEASES_URL + ' 下载。');
+      notify(uiText('mgrManualUpdateTitle'), uiText('mgrManualUpdateBody'));
+    }
+  });
   updater.on('checking-for-update', () => log('正在检查管理器更新...'));
   updater.on('update-available', (info) => log(`发现管理器新版本 ${info.version}，开始后台下载...`));
   updater.on('update-not-available', () => log('管理器已是最新版本。'));

@@ -1,6 +1,11 @@
 # Dependencies
 node_modules/
 
+# Rust / Tauri build output
+src-tauri/target/
+# Tauri 构建期生成的能力 schema（Cargo.lock 则要入库）
+src-tauri/gen/schemas/
+
 # Release build workspace (separate packaging directory, caches included)
 DSHManagerRelease/
 
