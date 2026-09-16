@@ -654,6 +654,7 @@ mod tests {
             version: "git".into(),
             description: String::new(),
             stats: None,
+            error: Some("HTTP 403".into()),
         };
         let d = build_github_dossier(&info);
         assert!(d.contains("仓库: o/r"));

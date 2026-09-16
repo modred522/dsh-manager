@@ -403,3 +403,99 @@ allow-listen/unlisten/emit/emit-to），`windows` 限定 `["main", "market"]`。
 一度以为 `core:event:default` 不含 `allow-listen`（查 `gen/schemas/acl-manifests.json`
 确认它是含的）。`touch src-tauri/build.rs` 强制重跑后才对。
 改 capability 之后请务必确认产物真的重建了。
+
+## 十四、第二轮真机验收发现的问题
+
+### 问题 1：`t is not a function` —— 从初版就带着的遮蔽
+
+`renderer/renderer.js` 的 `renderUsage()` 里写了 `const t = usage.totals || {}`，
+把 i18n.js 的 `t()` 遮成了一个数据对象。三份脚本（i18n.js + renderer.js / market.js）
+是按 `<script>` 顺序注进**同一个全局作用域**的，局部变量重名就是遮蔽。
+
+后果：同一函数后面的 `t('projEmpty')` / `t('projVal', …)` / `t('dayTip', …)` 直接抛错。
+因为它在 `loadUsage()` 这条 async 链上，异常变成 unhandled rejection ——
+**用量页的项目排行和每日趋势图从来没渲染过**。上面四个统计数字照常显示（它们在抛错
+之前就赋值了），所以界面看着只像是"没数据"。
+
+**不是移植引入的**：`git log -L306,306:renderer/renderer.js` 指到 `92a6d7b`
+（Electron 初版）。Electron 下这条 rejection 无人接管，所以一路没被发现 ——
+是上一节补的 `log_frontend_error` 把它捞出来的。那道防线本来就是为这类
+"界面看着能用、其实静默少渲染一块"的 bug 加的，第一次真机验收就抓到了一个。
+
+修法：局部变量改名 `tot`。`showToast` 里同样写法的 `const t = el(...)` 一并改掉 ——
+那两处当时没炸（后面没再调 `t()`），但是同一颗地雷。
+
+**守卫**：`tools/check-i18n.js` 新增"共享全局不被遮蔽"检查，保留名直接从 i18n.js
+的顶层声明里抽，将来那边加全局这里自动跟上；顺带把原先只打印不报错的几项
+（zh/en 键集不齐、用到但字典里没有、HTML 缺 id）改成非 0 退出，并接进 CI。
+反向验证：用出事前的 `renderer.js` 跑，准确报出 105、306 两行并以 1 退出。
+
+### 问题 2：市场详情/分析"获取失败" —— 不是 bug，是 GitHub 限流
+
+现象是详情页 README 区显示"获取详情失败（可能被 GitHub 限流或仓库不存在）"，
+分析控制台停在"获取仓库信息失败"。
+
+排查结论：**代码和网络都没问题**。`github_repo_stats("deepseek-ai","deepseek-harness")`
+在同一台机器上直接跑是成功的（225724 star、README 2444 字），curl 同样 200。
+真因是 `GET /rate_limit` 显示 **core 配额 0/60** —— GitHub 未登录接口按**出口 IP**
+限 60 次/小时，公司网络走 NAT，这 60 次是整个办公室共用的。13:58 探测时还剩 59 次，
+十几分钟后归零，其中我自己的测试用掉不到 10 次。
+
+也不是移植回归：Electron 版走的是同一套未登录接口，限制完全一样。
+
+### 真正该修的是"报错什么都不说"
+
+`github_repo_stats` 原先返回 `Option`，限流 / 404 / DNS / TLS / 超时 / 代理没开
+全被压成同一个 `None`，界面只能说"可能是 A 或 B"。用户没法自查，隔着一台机器
+也判断不出来 —— 这次为了定位，我不得不临时往 crate 里塞诊断测试才看到 403。
+
+改动：
+
+* `github_repo_stats` 改成 `Result<_, String>`；新增 `fetch_json` 统一带回原因 ——
+  HTTP 状态码，加上接口自己写在 body `message` 里的原因（403 是
+  "API rate limit exceeded"，404 是 "Not Found"，照抄比自己猜准）。
+* 配额耗尽时附上**恢复时间**（`x-ratelimit-reset`）。"14:58 恢复"比"被限流了"有用。
+  还有余量的 403 不报限流 —— 那是别的原因（例如缺 User-Agent）。
+* 连接失败/超时时，环境里有 `HTTPS_PROXY` 就一并报出来（去掉用户名密码）。
+  "命令行能通、应用里不通"十有八九是这里：reqwest 认代理环境变量，curl 未必走同一套。
+* 空 owner/repo 在发请求前就挡下，并说清是**参数缺失**。IPC 层参数是 `Option`，
+  没传到会变成空串，拼出 `/repos//` 只会换回一个 404，被报成"仓库不存在"就把
+  真问题（参数没传到）盖住了。
+* 接口原文转发前做两件事：**掩掉 IPv4**（GitHub 限流提示里带着本机公网出口 IP，
+  而日志是会被贴出来问人的）、**砍掉括号里的推销**（硬按长度切会留下 "Check ou"
+  这种半截话）。
+* 失败原因同时写进日志文件：`send_analyze_log` 只发事件、不入库，窗口一关就查不到。
+
+最终文案在真实限流状态下验过：
+
+```
+HTTP 403：API rate limit exceeded for <出口 IP>.（未登录接口按出口 IP 限 60 次/小时，公司网络是整个办公室共用这个额度；14:58 恢复）
+```
+
+npm 侧没动：它的详情接口没有这种限流（13:51 的检查更新正常走通），而且命令返回的是
+`Option<NpmInfo>`，渲染层拿到的是 `null`，要带原因得改返回结构 —— 没有实据就不动。
+
+### 遗留：共享出口 IP 下市场仍然不好用
+
+60 次/小时是整个办公室共享，光翻详情就够呛。彻底解决要支持**可选的 GitHub token**
+（登录后 5000 次/小时，公开仓库只读用不带任何 scope 的 classic token 就够）。
+但那牵扯凭据存在哪、怎么保证不进日志，是个需要单独拍板的设计问题，这次没动。
+当前至少做到了：失败时说得清原因，并告诉你什么时候能再试。
+
+### 顺带补上：`tauri` 分支漏掉了锁文件的 registry 修复
+
+`tauri` 分支是在 `main` 修掉锁文件之前分出去的，所以它的 `package-lock.json`
+里还有 **25 处 `http://qa.leihuo.netease.com/npm/`**（全是 `@tauri-apps/*`，
+本机 `npm config get registry` 指向的就是这个内网镜像），而且它的 `check.yml`
+里没有那条守卫 —— 于是同一个问题在这个分支上静默存在到现在。这本身就说明
+守卫必须跟着分支走，不能只加在出事的那一支上。
+
+改法与 `main` 一致：只替换 host 前缀，`version` / `integrity` 一个字节不动。
+换之前逐个校验过 npmjs 自己记录的 `dist.integrity` 与锁文件里的完全一致、
+`dist.tarball` 与改写后的 URL 完全一致（25/25 通过，只读元数据，没下载 tarball）——
+所以换 host 不改变安装出来的内容。守卫也照 `main` 的原文加进了 `check.yml`，
+并用改前的锁文件反向验过会以 1 退出。
+
+**注意**：本机 npm 默认走内网镜像，以后任何一次 `npm install` 都会把它重新写回来。
+根治要在仓库里放一份 `.npmrc` 把 registry 钉到公共地址，但那会改变本机的安装行为
+（内网镜像通常更快），没擅自动。

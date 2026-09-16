@@ -102,11 +102,11 @@ function appendLog(line) {
 
 // ---------------- Toast ----------------
 function showToast(msg, kind = 'info') {
-  const t = el('div', 'toast ' + kind, msg);
-  els.toasts.appendChild(t);
+  const node = el('div', 'toast ' + kind, msg);
+  els.toasts.appendChild(node);
   setTimeout(() => {
-    t.classList.add('leaving');
-    setTimeout(() => t.remove(), 320);
+    node.classList.add('leaving');
+    setTimeout(() => node.remove(), 320);
   }, 3000);
 }
 
@@ -303,12 +303,14 @@ function computeCost(u, cfg) {
 }
 
 function renderUsage(usage, cfg) {
-  const t = usage.totals || {};
-  els.statSessions.textContent = String(t.sessions || 0);
-  els.statOutput.textContent = fmtTokens(t.output);
-  els.statInput.textContent = fmtTokens(t.uncachedInput);
-  els.statCache.textContent = fmtTokens(t.cacheRead);
-  els.statCost.textContent = fmtCost(computeCost(t, cfg));
+  // 别把这个局部变量叫 t —— i18n.js 的 t() 是同一个全局作用域里的函数，
+  // 取名 t 会把它遮蔽掉，下面 t('projEmpty') 直接抛 "t is not a function"。
+  const tot = usage.totals || {};
+  els.statSessions.textContent = String(tot.sessions || 0);
+  els.statOutput.textContent = fmtTokens(tot.output);
+  els.statInput.textContent = fmtTokens(tot.uncachedInput);
+  els.statCache.textContent = fmtTokens(tot.cacheRead);
+  els.statCost.textContent = fmtCost(computeCost(tot, cfg));
 
   // 项目排行
   const projects = usage.projects || [];

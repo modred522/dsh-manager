@@ -50,11 +50,11 @@ function el(tag, cls, text) {
 
 // ---------------- Toast ----------------
 function showToast(msg, kind = 'info') {
-  const t = el('div', 'toast ' + kind, msg);
-  els.toasts.appendChild(t);
+  const node = el('div', 'toast ' + kind, msg);
+  els.toasts.appendChild(node);
   setTimeout(() => {
-    t.classList.add('leaving');
-    setTimeout(() => t.remove(), 320);
+    node.classList.add('leaving');
+    setTimeout(() => node.remove(), 320);
   }, 3000);
 }
 
@@ -409,7 +409,14 @@ function renderDetailNpm(info) {
 }
 
 function renderDetailGithub(info) {
-  if (!info || !info.stats) { els.pluginReadme.textContent = t('detailFailGh'); return; }
+  if (!info || !info.stats) {
+    // 后端会带回具体原因（403 限流 / 404 / 代理没开…）。拿不到原因才退回泛泛的提示——
+    // "可能是 A 或 B"这种话既不能指导用户自查，也没法隔着机器远程判断。
+    els.pluginReadme.textContent = info && info.error
+      ? t('detailFailGhWhy', info.error)
+      : t('detailFailGh');
+    return;
+  }
   const s = info.stats;
   els.pluginTitle.textContent = info.repo;
   els.pluginTitle.title = info.repo;

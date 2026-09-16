@@ -28,6 +28,157 @@ fn client() -> Option<reqwest::Client> {
         .ok()
 }
 
+/// 环境里配的代理（去掉可能带的用户名密码）。
+///
+/// reqwest 会自动认这些变量，而 curl / 浏览器未必走同一套 —— "命令行能通、
+/// 应用里不通"十有八九是这里。所以连接失败时要把它报出来。
+fn proxy_hint() -> Option<String> {
+    for key in ["HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"] {
+        let Ok(v) = std::env::var(key) else { continue };
+        let v = v.trim();
+        if v.is_empty() {
+            continue;
+        }
+        return Some(format!("{key}={}", mask_credentials(v)));
+    }
+    None
+}
+
+/// `http://user:pass@host:port` -> `http://host:port`
+fn mask_credentials(url: &str) -> String {
+    match (url.find("://"), url.rfind('@')) {
+        (Some(i), Some(at)) if at > i => format!("{}{}", &url[..i + 3], &url[at + 1..]),
+        _ => url.to_string(),
+    }
+}
+
+/// 把 reqwest 的错误翻成一句能直接指导排查的话。
+///
+/// 这些失败以前一律被压成 `None`，界面只好说"可能被限流或仓库不存在"——
+/// 限流、404、代理没开、TLS 失败、超时全长一个样，用户没法自查，
+/// 隔着一台机器也判断不出来。
+fn describe_error(e: &reqwest::Error) -> String {
+    let kind = if e.is_timeout() {
+        "请求超时"
+    } else if e.is_connect() {
+        "连接失败"
+    } else if e.is_decode() {
+        "响应解析失败"
+    } else {
+        "请求失败"
+    };
+    // 根因（DNS 解析不了 / 连接被拒 / TLS 握手失败）比分类有用，逐层取到最里面那条。
+    let mut cause: &dyn std::error::Error = e;
+    while let Some(next) = std::error::Error::source(cause) {
+        cause = next;
+    }
+    let mut out = format!("{kind}：{cause}");
+    if e.is_connect() || e.is_timeout() {
+        if let Some(p) = proxy_hint() {
+            out.push_str(&format!("（当前走代理 {p}；代理没开就是这个现象）"));
+        }
+    }
+    out
+}
+
+/// 接口返回的 `message` 会进日志、也会显示在界面上，转发前先处理两件事：
+///
+/// * **掩掉 IPv4** —— GitHub 的限流提示里带着本机的公网出口 IP。日志是会被
+///   贴出来问人的，公司出口 IP 没必要跟着一起出去。
+/// * **砍掉补充说明** —— 括号里那段对排查没用（见下面注释）。
+fn sanitize_api_message(m: &str) -> String {
+    const LIMIT: usize = 120;
+    let mut out = mask_ipv4(m.trim());
+    // 上游习惯把补充说明塞在括号里（GitHub 就爱挂一段"登录后额度更高"的推销）。
+    // 正文在前面的话直接砍掉括号那段，比按长度硬切干净 —— 硬切会留下
+    // "Check ou" 这种半截话。
+    if let Some(i) = out.find(" (") {
+        if i >= 10 {
+            out.truncate(i); // i 指向空格，天然是字符边界
+        }
+    }
+    let out = out.trim();
+    if out.chars().count() > LIMIT {
+        return format!("{}…", truncate_chars(out, LIMIT));
+    }
+    out.to_string()
+}
+
+fn mask_ipv4(s: &str) -> String {
+    s.split(' ')
+        .map(|tok| {
+            // 句尾标点要留着，别把 "for 1.2.3.4." 的句号也吃掉。
+            let core = tok.trim_end_matches(['.', ',', ')', ';', ':']);
+            let looks_like_ip = core.split('.').count() == 4
+                && core
+                    .split('.')
+                    .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
+            if looks_like_ip {
+                // core 全是数字和点，纯 ASCII，按字节切片是安全的。
+                format!("<出口 IP>{}", &tok[core.len()..])
+            } else {
+                tok.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// GitHub 把限流解除时间写在 `x-ratelimit-reset`（unix 秒）里。
+///
+/// 未登录接口是**按出口 IP** 限 60 次/小时：公司网络走 NAT 的话，这 60 次是
+/// 整个办公室共用的，随时可能不是自己用掉的。所以"什么时候能再试"比
+/// "被限流了"有用得多。
+fn rate_limit_reset_hint(headers: &reqwest::header::HeaderMap) -> Option<String> {
+    let remaining: u64 = headers
+        .get("x-ratelimit-remaining")?
+        .to_str()
+        .ok()?
+        .parse()
+        .ok()?;
+    // 还有余量说明 403 是别的原因（比如缺 User-Agent），别乱报限流。
+    if remaining > 0 {
+        return None;
+    }
+    let reset: i64 = headers
+        .get("x-ratelimit-reset")?
+        .to_str()
+        .ok()?
+        .parse()
+        .ok()?;
+    let at = chrono::DateTime::from_timestamp(reset, 0)?.with_timezone(&chrono::Local);
+    Some(format!(
+        "（未登录接口按出口 IP 限 60 次/小时，公司网络是整个办公室共用这个额度；{} 恢复）",
+        at.format("%H:%M")
+    ))
+}
+
+/// 取 JSON，失败时带回具体原因。
+///
+/// GitHub 出错会把原因写在 body 的 `message` 里（403 是 "API rate limit
+/// exceeded for …"，404 是 "Not Found"），照抄它比自己猜准得多。
+async fn fetch_json(c: &reqwest::Client, url: &str) -> Result<serde_json::Value, String> {
+    let res = c.get(url).send().await.map_err(|e| describe_error(&e))?;
+    let status = res.status();
+    // 限流信息只在响应头里，得在 text() 把响应吃掉之前取出来。
+    let reset_hint = rate_limit_reset_hint(res.headers());
+    let body = res.text().await.map_err(|e| describe_error(&e))?;
+    let json: serde_json::Value = serde_json::from_str(&body)
+        .map_err(|e| format!("HTTP {} 但响应不是 JSON：{e}", status.as_u16()))?;
+    if !status.is_success() {
+        let msg = json.get("message").and_then(|v| v.as_str());
+        let mut out = match msg.map(sanitize_api_message) {
+            Some(m) if !m.is_empty() => format!("HTTP {}：{m}", status.as_u16()),
+            _ => format!("HTTP {}", status.as_u16()),
+        };
+        if let Some(hint) = reset_hint {
+            out.push_str(&hint);
+        }
+        return Err(out);
+    }
+    Ok(json)
+}
+
 // ---------------------------------------------------------------------------
 // 搜索结果条目
 // ---------------------------------------------------------------------------
@@ -501,6 +652,8 @@ pub struct GithubInfo {
     pub version: String,
     pub description: String,
     pub stats: Option<RepoStats>,
+    /// `stats` 为空时的具体原因，给界面和日志用。
+    pub error: Option<String>,
 }
 
 const README_LIMIT: usize = 60_000;
@@ -510,20 +663,15 @@ fn truncate_chars(s: &str, limit: usize) -> String {
     s.chars().take(limit).collect()
 }
 
-pub async fn github_repo_stats(owner: &str, repo: &str) -> Option<RepoStats> {
-    let c = client()?;
-    let res = c
-        .get(format!("https://api.github.com/repos/{owner}/{repo}"))
-        .send()
-        .await
-        .ok()?;
-    if !res.status().is_success() {
-        return None;
+/// 抓仓库活跃度。失败时带回原因，调用方自己决定是显示还是忽略。
+pub async fn github_repo_stats(owner: &str, repo: &str) -> Result<RepoStats, String> {
+    // IPC 层的参数是 Option，没传到就成了空串；空 owner/repo 拼出来的 /repos//
+    // 只会换回一个 404，报成"仓库不存在"就把真正的问题盖住了。
+    if owner.is_empty() || repo.is_empty() {
+        return Err("缺少仓库标识（owner/repo）".into());
     }
-    let g: serde_json::Value = res.json().await.ok()?;
-    if g.get("message").is_some() {
-        return None;
-    }
+    let c = client().ok_or("创建 HTTP 客户端失败")?;
+    let g = fetch_json(&c, &format!("https://api.github.com/repos/{owner}/{repo}")).await?;
 
     // README 拉不到不影响其余信息。
     let mut readme = String::new();
@@ -543,7 +691,7 @@ pub async fn github_repo_stats(owner: &str, repo: &str) -> Option<RepoStats> {
 
     let s = |k: &str| -> String { g.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string() };
     let n = |k: &str| -> u64 { g.get(k).and_then(|v| v.as_u64()).unwrap_or(0) };
-    Some(RepoStats {
+    Ok(RepoStats {
         full_name: s("full_name"),
         stars: n("stargazers_count"),
         forks: n("forks_count"),
@@ -615,7 +763,7 @@ pub async fn npm_plugin_info(name: &str) -> Option<NpmInfo> {
         .to_string();
     // 从仓库地址反查 GitHub 活跃度（分析档案里要用）。
     let repo = match parse_owner_repo(&repo_url) {
-        Some((o, r)) => github_repo_stats(&o, &r).await,
+        Some((o, r)) => github_repo_stats(&o, &r).await.ok(),
         None => None,
     };
 
@@ -703,7 +851,10 @@ pub fn parse_owner_repo(url: &str) -> Option<(String, String)> {
 }
 
 pub async fn github_plugin_info(owner: &str, repo: &str) -> GithubInfo {
-    let stats = github_repo_stats(owner, repo).await;
+    let (stats, error) = match github_repo_stats(owner, repo).await {
+        Ok(s) => (Some(s), None),
+        Err(e) => (None, Some(e)),
+    };
 
     // 仓库根的 package.json 用来拿真实包名（装 GitHub 插件时 allowBuilds 要用）。
     let mut pkg: Option<serde_json::Value> = None;
@@ -748,6 +899,7 @@ pub async fn github_plugin_info(owner: &str, repo: &str) -> GithubInfo {
             .unwrap_or_default(),
         pkg_name,
         stats,
+        error,
     }
 }
 
@@ -951,5 +1103,137 @@ mod tests {
         assert!(npm_plugin_info("@modred522/definitely-not-real-xyz")
             .await
             .is_none());
+    }
+
+    /// 空 owner/repo 必须在发请求之前挡下，并且说清是参数缺失 —— 让它拼出
+    /// /repos// 去换一个 404，就会被报成"仓库不存在"，把 IPC 参数没传到的
+    /// 真问题盖掉。
+    #[tokio::test]
+    async fn empty_owner_repo_reports_missing_ref_not_network_error() {
+        let e = github_repo_stats("", "").await.unwrap_err();
+        assert!(e.contains("缺少仓库标识"), "原因不对: {e}");
+        let info = github_plugin_info("", "deepseek-harness").await;
+        assert!(info.stats.is_none());
+        assert!(
+            info.error.as_deref().unwrap_or("").contains("缺少仓库标识"),
+            "error 字段没带上原因: {:?}",
+            info.error
+        );
+    }
+
+    /// 渲染层靠 `error` 决定显示具体原因还是泛泛的失败提示。
+    #[test]
+    fn github_info_serializes_error_field() {
+        let v = serde_json::to_value(GithubInfo {
+            repo: "o/r".into(),
+            name: "r".into(),
+            pkg_name: None,
+            version: "git".into(),
+            description: String::new(),
+            stats: None,
+            error: Some("HTTP 403：API rate limit exceeded".into()),
+        })
+        .unwrap();
+        assert_eq!(
+            v.get("error").and_then(|e| e.as_str()),
+            Some("HTTP 403：API rate limit exceeded")
+        );
+        assert!(v.get("pkgName").is_some(), "应为 camelCase: {v}");
+    }
+
+    /// 连接失败必须带上根因。打 127.0.0.1:1（没人监听）离线就能复现。
+    ///
+    /// 这条断言的是"报错说得清不清"，不是"网络通不通" —— 以前所有网络失败
+    /// 都被压成 None，界面只能说"可能被限流或仓库不存在"。
+    #[tokio::test]
+    async fn connect_failure_is_described_with_root_cause() {
+        let c = client().unwrap();
+        let e = c.get("http://127.0.0.1:1/").send().await.unwrap_err();
+        let msg = describe_error(&e);
+        assert!(msg.starts_with("连接失败"), "分类不对: {msg}");
+        // 根因（拒绝连接之类）得真在里面，只有分类名等于什么都没说。
+        assert!(
+            msg.chars().count() > "连接失败：".chars().count() + 5,
+            "没带根因: {msg}"
+        );
+    }
+
+    /// 非 2xx 要把状态码和接口自己给的原因一起带出来。
+    ///
+    /// 用一个必定不存在的仓库触发 404；万一 CI 那边正被限流，返回的是 403
+    /// 加"API rate limit exceeded"，形状一样 —— 断言的是格式，不是具体码。
+    #[tokio::test]
+    async fn http_error_reports_status_and_api_message() {
+        let c = client().unwrap();
+        let r = fetch_json(
+            &c,
+            "https://api.github.com/repos/modred522/definitely-not-real-xyz",
+        )
+        .await;
+        let Err(e) = r else {
+            panic!("不存在的仓库不该成功");
+        };
+        if e.starts_with("连接失败") || e.starts_with("请求超时") {
+            return; // 无外网环境，跳过
+        }
+        assert!(e.starts_with("HTTP "), "缺状态码: {e}");
+        assert!(e.contains('：'), "没把接口给的原因带出来: {e}");
+    }
+
+    /// 限流提示里的公网出口 IP 不能原样写进日志或界面。
+    #[test]
+    fn api_message_masks_ip_and_drops_boilerplate() {
+        let raw = "API rate limit exceeded for 103.126.92.187. (But here's the good news: \
+                   Authenticated requests get a higher rate limit. Check out the documentation \
+                   for more details.)";
+        assert_eq!(
+            sanitize_api_message(raw),
+            "API rate limit exceeded for <出口 IP>.",
+            "括号里的推销该整段砍掉，不该留半截话"
+        );
+
+        // 没有括号可砍时才按长度截，并且要让人看出来是被截的。
+        let cut = sanitize_api_message(&"x".repeat(200));
+        assert_eq!(cut.chars().count(), 121, "{cut}");
+        assert!(cut.ends_with('…'), "{cut}");
+
+        // 版本号之类的不是 IP，别乱改。
+        assert_eq!(sanitize_api_message("Not Found"), "Not Found");
+        assert_eq!(sanitize_api_message("bad v1.2.3 x"), "bad v1.2.3 x");
+        assert_eq!(mask_ipv4("127.0.0.1"), "<出口 IP>");
+    }
+
+    /// 配额耗尽才提限流，还有余量的 403 是别的原因（例如缺 User-Agent）。
+    #[test]
+    fn rate_limit_hint_only_when_quota_is_gone() {
+        use reqwest::header::{HeaderMap, HeaderValue};
+        let mut h = HeaderMap::new();
+        assert!(rate_limit_reset_hint(&h).is_none(), "没有头就别猜");
+
+        h.insert("x-ratelimit-remaining", HeaderValue::from_static("0"));
+        h.insert("x-ratelimit-reset", HeaderValue::from_static("1789541888"));
+        let hint = rate_limit_reset_hint(&h).expect("配额耗尽时要给出恢复时间");
+        assert!(hint.contains("60 次/小时"), "{hint}");
+        assert!(hint.contains("恢复"), "{hint}");
+
+        h.insert("x-ratelimit-remaining", HeaderValue::from_static("42"));
+        assert!(
+            rate_limit_reset_hint(&h).is_none(),
+            "还有 42 次余量，不该报成限流"
+        );
+    }
+
+    /// 代理地址可能带着用户名密码，报错时不能原样写进日志。
+    #[test]
+    fn proxy_url_credentials_are_masked() {
+        assert_eq!(
+            mask_credentials("http://alice:s3cret@proxy.corp:8080"),
+            "http://proxy.corp:8080"
+        );
+        assert_eq!(
+            mask_credentials("http://127.0.0.1:7890"),
+            "http://127.0.0.1:7890"
+        );
+        assert_eq!(mask_credentials(""), "");
     }
 }

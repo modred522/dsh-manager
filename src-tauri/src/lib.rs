@@ -880,6 +880,7 @@ async fn analyze_inner(
         analysis::send_analyze_log(app, "正在收集插件档案（npm + GitHub）...");
         let Some(info) = market::npm_plugin_info(reference).await else {
             analysis::send_analyze_log(app, "获取插件信息失败（网络异常或包不存在）。");
+            logging::log(format!("插件分析中止（{reference}）：获取 npm 信息失败。"));
             return AnalyzeResult {
                 error: Some("info".into()),
                 ..Default::default()
@@ -896,7 +897,12 @@ async fn analyze_inner(
         analysis::send_analyze_log(app, "正在收集插件档案（GitHub）...");
         let info = market::github_plugin_info(owner, repo).await;
         if info.stats.is_none() {
-            analysis::send_analyze_log(app, "获取仓库信息失败（可能被限流或仓库不存在）。");
+            // 原因要落到日志文件里：分析控制台的内容只走事件、不入库，
+            // 窗口一关就查不到了。
+            let why = info.error.as_deref().unwrap_or("未知原因");
+            let line = format!("获取仓库信息失败：{why}");
+            analysis::send_analyze_log(app, &line);
+            logging::log(format!("插件分析中止（{owner}/{repo}）：{line}"));
             return AnalyzeResult {
                 error: Some("info".into()),
                 ..Default::default()
