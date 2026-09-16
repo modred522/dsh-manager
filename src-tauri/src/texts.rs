@@ -21,6 +21,7 @@ pub enum Key {
     NotifyUpdateTitle,
     NotifyUpdatedTitle,
     NotifyRollbackTitle,
+    NotifyManagerUpdateTitle,
 }
 
 /// 解析界面语言：`system` 时跟随系统（非中文环境用英文）。
@@ -73,6 +74,8 @@ pub fn t(lang: &str, key: Key) -> String {
         (Key::NotifyUpdateTitle, false) => "DSH Update Available",
         (Key::NotifyUpdatedTitle, true) => "更新完成",
         (Key::NotifyUpdatedTitle, false) => "Update Complete",
+        (Key::NotifyManagerUpdateTitle, true) => "管理器有新版本",
+        (Key::NotifyManagerUpdateTitle, false) => "Manager Update Available",
         (Key::NotifyRollbackTitle, true) => "回滚完成",
         (Key::NotifyRollbackTitle, false) => "Rollback Complete",
     }
@@ -104,6 +107,16 @@ pub fn notify_rollback_body(lang: &str, version: &str) -> String {
         format!("DSH 已回滚到 {version}")
     } else {
         format!("DSH has been rolled back to {version}")
+    }
+}
+
+/// 管理器新版本的通知正文。**明确说是手动下载** —— 决策 4 定的是只检查不自动装，
+/// 文案不能让人以为它会自己更新完。
+pub fn notify_manager_update_body(lang: &str, version: &str) -> String {
+    if resolve(lang) == "zh" {
+        format!("管理器 v{version} 已发布，请到发行页手动下载安装。")
+    } else {
+        format!("Manager v{version} is out — download it from the releases page.")
     }
 }
 
@@ -157,6 +170,10 @@ mod tests {
         assert!(notify_update_body("en", "0.1.6-alpha.1", true).contains("Prerelease"));
         assert!(notify_updated_body("zh", "0.2.0").contains("0.2.0"));
         assert!(notify_rollback_body("en", "0.1.9").contains("rolled back"));
+        // 决策 4：只检查不自动装，文案必须说清要手动下载。
+        let m = notify_manager_update_body("zh", "1.0.7");
+        assert!(m.contains("1.0.7") && m.contains("手动"), "{m}");
+        assert!(notify_manager_update_body("en", "1.0.7").contains("download"));
     }
 
     #[test]
@@ -175,6 +192,7 @@ mod tests {
             Key::NotifyUpdateTitle,
             Key::NotifyUpdatedTitle,
             Key::NotifyRollbackTitle,
+            Key::NotifyManagerUpdateTitle,
         ] {
             assert!(!t("zh", key).is_empty(), "缺中文: {key:?}");
             assert!(!t("en", key).is_empty(), "缺英文: {key:?}");

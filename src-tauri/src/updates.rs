@@ -6,12 +6,18 @@
 use std::sync::Mutex;
 
 use crate::dsh;
+use crate::gh;
 use crate::logging;
 use crate::pure::compare_versions;
 
 const DSH_PKG: &str = "@deepseek-ai/dsh";
 const RELEASES_URL: &str =
     "https://api.github.com/repos/deepseek-ai/deepseek-harness/releases?per_page=20";
+
+/// 管理器自己的发行版列表与下载页。
+const MANAGER_RELEASES_API: &str =
+    "https://api.github.com/repos/modred522/dsh-manager/releases?per_page=10";
+pub const MANAGER_RELEASES_PAGE: &str = "https://github.com/modred522/dsh-manager/releases";
 
 /// 取某个 npm 包的"最新版本"。
 ///
@@ -91,20 +97,17 @@ pub async fn fetch_changelog(version: &str) -> Option<String> {
 }
 
 async fn fetch_changelog_uncached(version: &str) -> Option<String> {
-    let client = reqwest::Client::builder()
-        // GitHub 接口必须带 User-Agent，否则 403。
-        .user_agent("dsh-manager")
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .ok()?;
-    let rels: serde_json::Value = client
-        .get(RELEASES_URL)
-        .send()
-        .await
-        .ok()?
-        .json()
-        .await
-        .ok()?;
+    // 走 gh 的统一管道：能吃到 GitHub 令牌（未登录 60 次/小时很容易在公司
+    // 共享出口 IP 上被耗光），失败原因也进得了日志。以前这里自建 client，
+    // 两样都没有，changelog 抓不到就只剩一个 None。
+    let client = gh::client()?;
+    let rels = match gh::fetch_json(&client, RELEASES_URL).await {
+        Ok(v) => v,
+        Err(e) => {
+            logging::log(format!("获取 DSH 更新日志失败：{e}"));
+            return None;
+        }
+    };
     let wanted = format!("dsh-v{version}");
     let body = rels
         .as_array()?
@@ -118,6 +121,59 @@ async fn fetch_changelog_uncached(version: &str) -> Option<String> {
     } else {
         Some(cleaned)
     }
+}
+
+/// 管理器自身有没有更新的发行版；有就返回版本号（不带 `v`）。
+///
+/// **只检查、不自动安装**，理由见 docs 第十六节（决策 4）：
+/// `tauri-plugin-updater` 强制 Ed25519 签名，私钥得长期躺在 CI secret 里，
+/// 一旦丢失所有已装客户端就再也无法自动更新；而它在 Windows 上下载的本就是
+/// NSIS 安装器、照样弹安装界面。所以这里只负责"告诉你有新版、给出下载地址"，
+/// 与 v1.0.6 的 Electron 版在过渡期的行为一致（那边 `latest.yml` 404 时也是
+/// 改口播手动下载），用户看到的说法跨迁移是连续的。
+///
+/// `channel = "latest"` 跳过预发布版；其它值（默认 `all`）把预发布版也算上。
+///
+/// **前提**：发行版的版本号必须写进 `Cargo.toml` / `tauri.conf.json`，否则
+/// 编译进来的 `CARGO_PKG_VERSION` 是仓库里的占位值，比较就没有意义。
+/// 这件事归入「Electron 退场」时要补的 Tauri 发版工作流。
+pub async fn latest_manager_release(channel: &str) -> Result<Option<String>, String> {
+    let c = gh::client().ok_or("创建 HTTP 客户端失败")?;
+    let rels = gh::fetch_json(&c, MANAGER_RELEASES_API).await?;
+    let arr = rels.as_array().ok_or("发行版接口返回的不是数组")?;
+    Ok(pick_newer_release(arr, channel, env!("CARGO_PKG_VERSION")))
+}
+
+/// 从发行版列表里挑出比 `current` 新的最高版本。纯函数，好用固定数据测全分支。
+///
+/// 不信任接口的排序（GitHub 按创建时间倒序，补发的旧版本会插在前面），
+/// 所以逐条比较取最大，而不是拿第一条。
+fn pick_newer_release(rels: &[serde_json::Value], channel: &str, current: &str) -> Option<String> {
+    let mut best: Option<String> = None;
+    for r in rels {
+        let flag = |k: &str| r.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
+        if flag("draft") {
+            continue;
+        }
+        if channel == "latest" && flag("prerelease") {
+            continue;
+        }
+        let Some(tag) = r.get("tag_name").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let v = tag.trim_start_matches('v');
+        if v.is_empty() || compare_versions(v, current) != std::cmp::Ordering::Greater {
+            continue;
+        }
+        let better = best
+            .as_deref()
+            .map(|b| compare_versions(v, b) == std::cmp::Ordering::Greater)
+            .unwrap_or(true);
+        if better {
+            best = Some(v.to_string());
+        }
+    }
+    best
 }
 
 /// `npm install -g @deepseek-ai/dsh@<version>`，输出逐行进日志。
@@ -213,5 +269,50 @@ mod tests {
         // 不存在的版本拉不到正文；重复调用应命中缓存而不再发请求。
         assert!(fetch_changelog("0.0.0-does-not-exist").await.is_none());
         assert!(fetch_changelog("0.0.0-does-not-exist").await.is_none());
+    }
+
+    fn rel(tag: &str, prerelease: bool, draft: bool) -> serde_json::Value {
+        serde_json::json!({ "tag_name": tag, "prerelease": prerelease, "draft": draft })
+    }
+
+    #[test]
+    fn picks_highest_newer_release_and_respects_channel() {
+        // 故意乱序，并混进草稿、预发布、比当前还旧的版本。
+        let rels = vec![
+            rel("v1.0.7-alpha.1", true, false),
+            rel("v1.0.8", false, true),  // 草稿：任何通道都不算
+            rel("v1.0.5", false, false), // 比 current 旧
+            rel("v1.0.7", false, false),
+            rel("v1.0.6", false, false),
+            serde_json::json!({ "prerelease": false }), // 没有 tag_name
+        ];
+
+        // all 通道：预发布也算，但 1.0.7 正式版比 1.0.7-alpha.1 高。
+        assert_eq!(
+            pick_newer_release(&rels, "all", "1.0.6").as_deref(),
+            Some("1.0.7")
+        );
+        // latest 通道：跳过预发布。
+        assert_eq!(
+            pick_newer_release(&rels, "latest", "1.0.6").as_deref(),
+            Some("1.0.7")
+        );
+        // 只有预发布比当前新时，两个通道结论不同 —— 这才是通道设置的意义。
+        let only_pre = vec![rel("v1.1.0-rc.1", true, false)];
+        assert_eq!(
+            pick_newer_release(&only_pre, "all", "1.0.7").as_deref(),
+            Some("1.1.0-rc.1")
+        );
+        assert_eq!(pick_newer_release(&only_pre, "latest", "1.0.7"), None);
+
+        // 已是最新：不该谎报有更新。
+        assert_eq!(pick_newer_release(&rels, "all", "1.0.7"), None);
+        assert_eq!(pick_newer_release(&rels, "all", "2.0.0"), None);
+        // 草稿单独确认一次。
+        assert_eq!(
+            pick_newer_release(&[rel("v9.9.9", false, true)], "all", "1.0.0"),
+            None
+        );
+        assert_eq!(pick_newer_release(&[], "all", "1.0.0"), None);
     }
 }

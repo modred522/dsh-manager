@@ -10,6 +10,7 @@
 pub mod analysis;
 pub mod config;
 pub mod dsh;
+pub mod gh;
 pub mod logging;
 pub mod market;
 pub mod plugins;
@@ -1014,7 +1015,7 @@ async fn set_github_token(token: Option<String>) -> TokenResult {
     if let Err(e) = token::validate(t) {
         return done(false, e);
     }
-    match market::probe_token(t).await {
+    match gh::probe_token(t).await {
         Ok(limit) => match token::save(t) {
             Ok(()) => {
                 logging::log(format!(
@@ -1219,6 +1220,49 @@ fn set_progress(app: &AppHandle, kind: Option<ProgressKind>) {
     };
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.set_progress_bar(state);
+    }
+}
+
+/// 查一次管理器自身有没有新版本，有就记日志 + 弹通知。
+///
+/// **只检查，不自动安装**（决策 4，见 docs 第十六节）。这也是 `autoUpdateManager`
+/// 这个开关真正落地的地方 —— 在此之前它在配置结构和界面上都存在，后端却没人读，
+/// 点了毫无反应。
+///
+/// debug 构建跳过：开发时 `CARGO_PKG_VERSION` 是仓库里的占位版本，
+/// 每次启动都会报"有新版"，纯噪音。
+async fn check_manager_update(app: &AppHandle) {
+    if cfg!(debug_assertions) {
+        return;
+    }
+    let (enabled, channel, lang) = {
+        let st = app.state::<AppState>();
+        let cfg = st.config.lock().unwrap_or_else(|e| e.into_inner());
+        (
+            cfg.auto_update_manager,
+            cfg.update_channel.clone(),
+            cfg.language.clone(),
+        )
+    };
+    if !enabled {
+        return;
+    }
+    match updates::latest_manager_release(&channel).await {
+        Ok(Some(v)) => {
+            logging::log(format!(
+                "管理器有新版本 v{v}，请到 {} 手动下载安装。",
+                updates::MANAGER_RELEASES_PAGE
+            ));
+            notify(
+                app,
+                &texts::t(&lang, texts::Key::NotifyManagerUpdateTitle),
+                &texts::notify_manager_update_body(&lang, &v),
+            );
+        }
+        Ok(None) => {}
+        // 查不到不值得打扰用户（大概率是限流或断网），但要留痕，
+        // 否则"为什么从来没提示过新版"就无从排查。
+        Err(e) => logging::log(format!("检查管理器更新失败：{e}")),
     }
 }
 
@@ -1668,6 +1712,7 @@ pub fn run() {
                 if auto_check {
                     check_updates(h.clone(), Some(true)).await;
                 }
+                check_manager_update(&h).await;
             });
 
             spawn_state_timer(handle.clone());

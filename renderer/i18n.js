@@ -25,7 +25,7 @@ const I18N = {
     checkingNow: '检查中…', updatingNow: '更新中…', installingNow: '安装中…',
     // settings
     setAutoCheck: '自动检查更新', setWatchdog: '崩溃自动重启',
-    setCleanAnalysis: '分析后清理分析会话', setAutoUpdateManager: '自动更新管理器', setSilent: '启动时静默到托盘',
+    setCleanAnalysis: '分析后清理分析会话', setAutoUpdateManager: '检查管理器新版本', setSilent: '启动时静默到托盘',
     setAutoStart: '开机自动运行',
     setGithubToken: 'GitHub 令牌（可选）',
     tokenScopeHint: '用于提高插件市场的 GitHub 接口额度（60 次/小时 → 5000 次/小时）。只读公开仓库，不需要勾任何 scope。令牌存在 Windows 凭据管理器，不写配置文件。',
@@ -127,7 +127,7 @@ const I18N = {
     rollback: (v) => `Rollback v${v}`,
     checkingNow: 'Checking…', updatingNow: 'Updating…', installingNow: 'Installing…',
     setAutoCheck: 'Auto check updates', setWatchdog: 'Auto restart on crash',
-    setCleanAnalysis: 'Clean analysis sessions', setAutoUpdateManager: 'Auto-update the manager', setSilent: 'Start minimized to tray',
+    setCleanAnalysis: 'Clean analysis sessions', setAutoUpdateManager: 'Check for manager updates', setSilent: 'Start minimized to tray',
     setAutoStart: 'Run at startup',
     setGithubToken: 'GitHub token (optional)',
     tokenScopeHint: 'Raises the marketplace\'s GitHub API quota (60/hour to 5000/hour). Read-only on public repos — no scopes needed. Stored in Windows Credential Manager, never in the config file.',
