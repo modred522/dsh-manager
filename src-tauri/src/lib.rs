@@ -1116,7 +1116,22 @@ fn create_shortcut(app: AppHandle) -> Result<(), String> {
 }
 
 /// 建桌面快捷方式。`only_if_missing` 给启动时的自动补建用。
+///
+/// **开发构建一律拒绝。** 真机踩过一次：在 `tauri dev` 里点了托盘的
+/// "创建桌面快捷方式"，桌面上就留下一个指向 `target\debug\dsh-manager.exe`
+/// 的 .lnk。那个产物有两处致命差别 —— 它是控制台子系统（双击先弹一个黑框），
+/// 前端又指向 `tauri dev` 起的临时服务器，脱离 dev 双击只会得到 WebView2 的
+/// "无法访问此页面"。更糟的是启动时的自动补建用的是 `only_if_missing`，
+/// 发布版看见文件已存在就跳过，于是这个坏快捷方式会一直留着。
+///
+/// 启动路径原本就有 `!cfg!(debug_assertions)` 把关，漏的是托盘和命令这两条
+/// 手动入口 —— 所以把判断挪到这里，一处管全部。
 fn make_shortcut(app: &AppHandle, only_if_missing: bool) -> Result<(), String> {
+    if cfg!(debug_assertions) {
+        let msg = "开发构建不创建桌面快捷方式：debug 产物脱离 tauri dev 打不开（会弹控制台，页面也加载不出来）。要桌面图标请用 tauri build 的产物或安装器。";
+        logging::log(msg);
+        return Err(msg.to_string());
+    }
     let desktop = app
         .path()
         .desktop_dir()
@@ -1620,7 +1635,8 @@ pub fn run() {
             // 调试构建不自动建桌面快捷方式：`tauri dev` 的产物在 target/debug 下，
             // 随时会被 cargo clean 掉，往用户桌面放一个指向它的链接纯属污染。
             // 托盘菜单里那个「创建桌面快捷方式」仍然可用（用户明确要求时才建）。
-            if cfg.create_desktop_shortcut && !cfg!(debug_assertions) {
+            // debug 的把关在 make_shortcut 里，这里不再重复判断。
+            if cfg.create_desktop_shortcut {
                 let _ = make_shortcut(&handle, true);
             }
 
