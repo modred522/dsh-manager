@@ -1,15 +1,17 @@
 //! DSH 管理器 — Tauri 版主模块。
 //!
 //! 已完成：状态/启停/托盘/日志（阶段一）、更新回滚/通知/快捷键/自启/快捷方式（阶段二）、
-//! 用量统计/插件管理（阶段三）。待做：市场与分析（阶段四）。
+//! 用量统计/插件管理（阶段三）、插件市场/分析管线（阶段四）。29 个命令全部接通。
 //!
 //! 与 Electron 版的对应关系见 `docs/TAURI-MIGRATION.md`。整个迁移刻意保持
 //! **渲染层零改动**：`renderer/tauri-bridge.js` 把 `window.dsh.*` 映射到
 //! Tauri 的 `invoke`/`listen`，所以 `renderer.js` / `market.js` 不用动。
 
+pub mod analysis;
 pub mod config;
 pub mod dsh;
 pub mod logging;
+pub mod market;
 pub mod plugins;
 pub mod procs;
 pub mod pure;
@@ -28,15 +30,14 @@ use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use config::Config;
 
-/// 未实现的阶段二/三/四命令统一返回这个，方便前端灰掉按钮而不是白屏。
-const NOT_YET: &str = "该功能正在迁移到 Tauri 版，尚未实现";
-
 pub struct AppState {
     pub config: Mutex<Config>,
     pub npm_prefix: Mutex<String>,
     pub latest_version: Mutex<Option<String>>,
     pub last_check_time: Mutex<Option<String>>,
     pub busy: Mutex<Option<String>>,
+    /// dsh CLI 自身的依赖集合：市场搜索要把这些核心包排除掉。
+    pub core_packages: Mutex<std::collections::HashSet<String>>,
 }
 
 impl AppState {
@@ -47,6 +48,7 @@ impl AppState {
             latest_version: Mutex::new(None),
             last_check_time: Mutex::new(None),
             busy: Mutex::new(None),
+            core_packages: Mutex::new(std::collections::HashSet::new()),
         }
     }
 
@@ -679,32 +681,284 @@ async fn upgrade_plugin(app: AppHandle, name: Option<String>) -> PluginResult {
 }
 
 #[tauri::command]
-fn market_search() -> Result<serde_json::Value, String> {
-    Err(NOT_YET.into())
+async fn market_search(
+    app: AppHandle,
+    source: Option<String>,
+    query: Option<String>,
+    reset: Option<bool>,
+) -> market::SearchResult {
+    let core = app
+        .state::<AppState>()
+        .core_packages
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    market::search_page(
+        source.as_deref().unwrap_or("npm"),
+        query.as_deref().unwrap_or(""),
+        reset.unwrap_or(false),
+        &core,
+    )
+    .await
 }
+
 #[tauri::command]
-fn plugin_info() -> Result<serde_json::Value, String> {
-    Err(NOT_YET.into())
+async fn plugin_info(name: Option<String>) -> Option<market::NpmInfo> {
+    market::npm_plugin_info(name.unwrap_or_default().trim()).await
 }
+
 #[tauri::command]
-fn github_plugin_info() -> Result<serde_json::Value, String> {
-    Err(NOT_YET.into())
+async fn github_plugin_info(owner: Option<String>, repo: Option<String>) -> market::GithubInfo {
+    market::github_plugin_info(
+        owner.unwrap_or_default().trim(),
+        repo.unwrap_or_default().trim(),
+    )
+    .await
 }
-#[tauri::command]
-fn install_github_plugin() -> Result<serde_json::Value, String> {
-    Err(NOT_YET.into())
+
+/// GitHub 源插件的 `prepare` 构建脚本被 pnpm 安全闸门拦着，
+/// 需要把包名写进 `profiles/web/pnpm-workspace.yaml` 的 `allowBuilds`。
+/// 渲染层已经先弹过供应链风险确认了，到这里才写。
+fn ensure_allow_builds(pkg_name: &str) -> std::io::Result<()> {
+    if pkg_name.is_empty() {
+        return Ok(());
+    }
+    let ws = usage::dsh_home()
+        .join("profiles")
+        .join("web")
+        .join("pnpm-workspace.yaml");
+    let text = std::fs::read_to_string(&ws).unwrap_or_default();
+    if text.contains(pkg_name) {
+        return Ok(()); // 已经放行过
+    }
+    let prefix = if text.is_empty() || text.ends_with('\n') {
+        ""
+    } else {
+        "\n"
+    };
+    let addition = format!("{prefix}allowBuilds:\n  - '{pkg_name}'\n");
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&ws)?;
+    f.write_all(addition.as_bytes())
 }
+
 #[tauri::command]
-fn plugin_analyze() -> Result<serde_json::Value, String> {
-    Err(NOT_YET.into())
+async fn install_github_plugin(
+    app: AppHandle,
+    owner: Option<String>,
+    repo: Option<String>,
+) -> PluginResult {
+    let owner = owner.unwrap_or_default().trim().to_string();
+    let repo = repo.unwrap_or_default().trim().to_string();
+    if owner.is_empty() || repo.is_empty() {
+        return PluginResult {
+            ok: false,
+            error: Some("仓库信息不完整".into()),
+        };
+    }
+    if busy_get(&app).is_some() {
+        return PluginResult {
+            ok: false,
+            error: Some("有操作正在进行".into()),
+        };
+    }
+
+    busy_set(&app, Some("plugin"));
+    send_state(&app).await;
+    logging::log(format!("准备安装 GitHub 插件 {owner}/{repo}..."));
+
+    let info = market::github_plugin_info(&owner, &repo).await;
+    if let Some(pkg) = info.pkg_name.as_deref() {
+        if let Err(e) = ensure_allow_builds(pkg) {
+            logging::log(format!("allowBuilds 写入失败: {e}"));
+        }
+    }
+
+    let spec = format!("github:{owner}/{repo}");
+    logging::log(format!(
+        "安装 {owner}/{repo}（dsh plugin --profile web add {spec}）..."
+    ));
+    let code = plugins::run_plugin_command(&["add", &spec]).await;
+    busy_set(&app, None);
+    send_state(&app).await;
+
+    if code == 0 {
+        logging::log(format!("插件 {owner}/{repo} 安装完成，重启 DSH 后生效。"));
+        PluginResult {
+            ok: true,
+            error: None,
+        }
+    } else {
+        logging::log(format!(
+            "插件 {owner}/{repo} 安装失败（退出码 {code}），见上方日志。"
+        ));
+        PluginResult {
+            ok: false,
+            error: Some(format!("退出码 {code}")),
+        }
+    }
 }
-#[tauri::command]
-fn plugin_analyze_stop() -> Result<(), String> {
-    Err(NOT_YET.into())
+
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyzeResult {
+    ok: bool,
+    label: Option<String>,
+    result: Option<serde_json::Value>,
+    cached: bool,
+    error: Option<String>,
 }
+
 #[tauri::command]
-fn analysis_history() -> Result<serde_json::Value, String> {
-    Err(NOT_YET.into())
+async fn plugin_analyze(
+    app: AppHandle,
+    source: Option<String>,
+    #[allow(non_snake_case)] r#ref: Option<String>,
+    force: Option<bool>,
+) -> AnalyzeResult {
+    let source = source.unwrap_or_else(|| "npm".into());
+    let reference = r#ref.unwrap_or_default();
+    let force = force.unwrap_or(false);
+    if reference.is_empty() {
+        return AnalyzeResult {
+            error: Some("缺少插件标识".into()),
+            ..Default::default()
+        };
+    }
+    if busy_get(&app).is_some() {
+        return AnalyzeResult {
+            error: Some("busy".into()),
+            ..Default::default()
+        };
+    }
+
+    busy_set(&app, Some("analyze"));
+    send_state(&app).await;
+    let out = analyze_inner(&app, &source, &reference, force).await;
+    busy_set(&app, None);
+    send_state(&app).await;
+    out
+}
+
+async fn analyze_inner(
+    app: &AppHandle,
+    source: &str,
+    reference: &str,
+    force: bool,
+) -> AnalyzeResult {
+    // ① 收集公开资料档案（headless 没有联网工具，所以由管理器来收）。
+    let (label, dossier) = if source == "npm" {
+        analysis::send_analyze_log(app, "正在收集插件档案（npm + GitHub）...");
+        let Some(info) = market::npm_plugin_info(reference).await else {
+            analysis::send_analyze_log(app, "获取插件信息失败（网络异常或包不存在）。");
+            return AnalyzeResult {
+                error: Some("info".into()),
+                ..Default::default()
+            };
+        };
+        (
+            format!("{}@{}", info.name, info.version),
+            analysis::build_npm_dossier(&info),
+        )
+    } else {
+        let mut parts = reference.splitn(2, '/');
+        let owner = parts.next().unwrap_or("");
+        let repo = parts.next().unwrap_or("");
+        analysis::send_analyze_log(app, "正在收集插件档案（GitHub）...");
+        let info = market::github_plugin_info(owner, repo).await;
+        if info.stats.is_none() {
+            analysis::send_analyze_log(app, "获取仓库信息失败（可能被限流或仓库不存在）。");
+            return AnalyzeResult {
+                error: Some("info".into()),
+                ..Default::default()
+            };
+        }
+        (
+            format!("{owner}/{repo}"),
+            analysis::build_github_dossier(&info),
+        )
+    };
+
+    // ② 命中历史缓存就直接返回（分析要花真金白银的 API tokens）。
+    if !force {
+        if let Some(cached) = analysis::load_history(source, reference) {
+            if let Some(result) = cached.get("result") {
+                let when = cached
+                    .get("analyzedAt")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .chars()
+                    .take(10)
+                    .collect::<String>();
+                analysis::send_analyze_log(
+                    app,
+                    format!("发现历史分析结果（{when}），如需重新评估请点「重新分析」。"),
+                );
+                analysis::send_analyze_done(app, result);
+                return AnalyzeResult {
+                    ok: true,
+                    label: Some(label),
+                    result: Some(result.clone()),
+                    cached: true,
+                    error: None,
+                };
+            }
+        }
+    }
+
+    // ③ 补齐 headless profile 缺的模型适配器插件，否则会报 NO_ADAPTER。
+    analysis::send_analyze_log(app, "检查分析环境（headless profile 插件）...");
+    analysis::ensure_analysis_env(app).await;
+
+    // ④ 跑 headless。
+    let prefix = app.state::<AppState>().prefix();
+    let task = analysis::prompt_for(&label, &dossier);
+    analysis::send_analyze_log(
+        app,
+        format!("调用 dsh headless 分析 {label}（最长 10 分钟，会消耗 API tokens）..."),
+    );
+    let r = analysis::run_headless(app, &prefix, &task).await;
+    analysis::send_analyze_log(app, format!("分析进程结束（退出码 {}）。", r.code));
+
+    // ⑤ 分析结束后清理管理器私有的会话目录（绝不碰 $DSH_HOME/sessions）。
+    let cfg = app.state::<AppState>().cfg();
+    if cfg.clean_analysis_sessions {
+        analysis::clean_analysis_sessions();
+        analysis::send_analyze_log(app, "已清理分析会话目录（不会影响 dsh web 会话）。");
+    }
+
+    let result = match r.json {
+        Some(json) => analysis::with_raw(json, &r.raw),
+        None => {
+            analysis::send_analyze_log(app, "未能从输出中解析出结构化结论，请查看上方原始输出。");
+            analysis::fallback_result(&r.raw)
+        }
+    };
+    analysis::save_history(source, reference, &label, &result);
+    analysis::send_analyze_done(app, &result);
+    AnalyzeResult {
+        ok: true,
+        label: Some(label),
+        result: Some(result),
+        cached: false,
+        error: None,
+    }
+}
+
+#[tauri::command]
+fn plugin_analyze_stop(app: AppHandle) -> bool {
+    analysis::stop(&app)
+}
+
+#[tauri::command]
+fn analysis_history(source: Option<String>, r#ref: Option<String>) -> Option<serde_json::Value> {
+    analysis::load_history(
+        source.as_deref().unwrap_or("npm"),
+        r#ref.as_deref().unwrap_or(""),
+    )
 }
 #[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -781,6 +1035,25 @@ fn make_shortcut(app: &AppHandle, only_if_missing: bool) -> Result<(), String> {
 // ---------------------------------------------------------------------------
 // 外壳：窗口、托盘、主题、定时器
 // ---------------------------------------------------------------------------
+
+/// dsh CLI 自身的依赖集合。市场搜索把这些核心包排掉，
+/// 否则用户会在"插件市场"里看到一堆 dsh 内部包。
+fn load_core_packages(npm_prefix: &str) -> std::collections::HashSet<String> {
+    let path = std::path::Path::new(npm_prefix)
+        .join("node_modules")
+        .join("@deepseek-ai")
+        .join("dsh")
+        .join("package.json");
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| {
+            v.get("dependencies")?
+                .as_object()
+                .map(|o| o.keys().cloned().collect())
+        })
+        .unwrap_or_default()
+}
 
 fn busy_get(app: &AppHandle) -> Option<String> {
     app.state::<AppState>()
@@ -1218,7 +1491,6 @@ pub fn run() {
             install_plugin,
             remove_plugin,
             upgrade_plugin,
-            // 后续阶段占位
             market_search,
             plugin_info,
             github_plugin_info,
@@ -1241,8 +1513,14 @@ pub fn run() {
                 let _ = make_shortcut(&handle, true);
             }
 
-            // npm 前缀要起子进程解析，别卡住启动。启动时的自动检查也挂在它后面，
-            // 因为查版本要用到这个前缀。
+            // 清理上次崩溃遗留的分析会话（只动管理器私有目录）。
+            if cfg.clean_analysis_sessions {
+                analysis::clean_analysis_sessions();
+            }
+            analysis::ensure_session_patch();
+
+            // npm 前缀要起子进程解析，别卡住启动。核心包集合、补丁行校验、
+            // 首次检查更新都挂在它后面，因为都要用到这个前缀。
             let h = handle.clone();
             let auto_check = cfg.auto_check_on_startup;
             tauri::async_runtime::spawn(async move {
@@ -1252,10 +1530,12 @@ pub fn run() {
                         "未能解析 npm 全局前缀（npm prefix -g），版本与插件功能可能不可用。",
                     );
                 } else {
-                    *h.state::<AppState>()
-                        .npm_prefix
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner()) = prefix;
+                    let st = h.state::<AppState>();
+                    *st.core_packages.lock().unwrap_or_else(|e| e.into_inner()) =
+                        load_core_packages(&prefix);
+                    *st.npm_prefix.lock().unwrap_or_else(|e| e.into_inner()) = prefix.clone();
+                    // dsh 升级若改了补丁行 id，会话隔离会静默失效，这里告警。
+                    analysis::verify_patch_row(&prefix);
                 }
                 send_state(&h).await;
                 if auto_check {
