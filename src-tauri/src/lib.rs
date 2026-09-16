@@ -17,6 +17,7 @@ pub mod procs;
 pub mod pure;
 pub mod shortcut;
 pub mod texts;
+pub mod token;
 pub mod updates;
 pub mod usage;
 
@@ -985,6 +986,77 @@ fn plugin_analyze_stop(app: AppHandle) -> bool {
     analysis::stop(&app)
 }
 
+/// 令牌操作的结果。**不含令牌本身**，`status` 里只有掩码后的尾 4 位。
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenResult {
+    ok: bool,
+    /// 给用户看的一句话。
+    message: String,
+    status: token::Status,
+}
+
+#[tauri::command]
+fn get_token_status() -> token::Status {
+    token::status()
+}
+
+/// 保存令牌。校验形状 -> 联网验一次 -> 才写进凭据管理器。
+#[tauri::command]
+async fn set_github_token(token: Option<String>) -> TokenResult {
+    let raw = token.unwrap_or_default();
+    let t = raw.trim();
+    let done = |ok: bool, message: String| TokenResult {
+        ok,
+        message,
+        status: token::status(),
+    };
+    if let Err(e) = token::validate(t) {
+        return done(false, e);
+    }
+    match market::probe_token(t).await {
+        Ok(limit) => match token::save(t) {
+            Ok(()) => {
+                logging::log(format!(
+                    "已保存 GitHub 令牌（{}），配额 {limit} 次/小时。",
+                    token::hint(t)
+                ));
+                done(true, format!("令牌有效，配额 {limit} 次/小时。"))
+            }
+            Err(e) => done(false, e),
+        },
+        // 令牌本身不对就别存，否则市场会继续以"限流"的面目失败。
+        Err(e) if e.contains("401") => done(false, format!("{e}，没有保存。")),
+        // 网络不通不该拦着保存 —— 用户很可能正是因为连不上/被限流才来配这个。
+        Err(e) => match token::save(t) {
+            Ok(()) => {
+                logging::log(format!(
+                    "已保存 GitHub 令牌（{}），但未能联网校验。",
+                    token::hint(t)
+                ));
+                done(true, format!("已保存，但没能联网校验：{e}"))
+            }
+            Err(e2) => done(false, e2),
+        },
+    }
+}
+
+#[tauri::command]
+fn clear_github_token() -> TokenResult {
+    let status_after = |ok: bool, message: String| TokenResult {
+        ok,
+        message,
+        status: token::status(),
+    };
+    match token::clear() {
+        Ok(()) => {
+            logging::log("已清除 GitHub 令牌。");
+            status_after(true, "已清除。".into())
+        }
+        Err(e) => status_after(false, e),
+    }
+}
+
 #[tauri::command]
 fn analysis_history(source: Option<String>, r#ref: Option<String>) -> Option<serde_json::Value> {
     analysis::load_history(
@@ -1531,6 +1603,9 @@ pub fn run() {
             plugin_analyze,
             plugin_analyze_stop,
             analysis_history,
+            get_token_status,
+            set_github_token,
+            clear_github_token,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();

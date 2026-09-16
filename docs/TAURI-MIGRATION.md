@@ -499,3 +499,74 @@ npm 侧没动：它的详情接口没有这种限流（13:51 的检查更新正�
 **注意**：本机 npm 默认走内网镜像，以后任何一次 `npm install` 都会把它重新写回来。
 根治要在仓库里放一份 `.npmrc` 把 registry 钉到公共地址，但那会改变本机的安装行为
 （内网镜像通常更快），没擅自动。
+
+## 十五、可选的 GitHub 令牌
+
+第十四节查明市场"获取失败"的真因是 GitHub 未登录接口按出口 IP 限 60 次/小时、
+公司 NAT 全办公室共用。带令牌是 5000 次/小时，所以补上这个开关。
+
+### 存在哪
+
+**Windows 凭据管理器**（`CredWriteW`，generic 类型，`CRED_PERSIST_LOCAL_MACHINE`），
+条目名 `dsh-manager:github-token`。**不进 `config.json`** —— 那是明文，任何以当前
+用户身份运行的进程都读得到；凭据管理器至少做到随用户凭据加密，而且用户能在
+"控制面板 → 凭据管理器 → Windows 凭据"里自己看到并删掉它。
+
+没引新依赖：`windows` crate 本来就在（桌面快捷方式那段 COM 用着），只多开了一个
+`Win32_Security_Credentials` feature。考虑过 `keyring` crate，但现成依赖已经够用就
+不再多引一个。代价是 ~70 行 unsafe FFI，用一条**真跑**读/写/覆盖写/删/重复删的
+往返测试兜住（用一次性条目名，跑完 `cmdkey /list` 确认过无残留）。
+
+也认 `GITHUB_TOKEN` / `GH_TOKEN` 环境变量，且**优先级高于存储**。这时候界面会把
+输入框锁掉并说明是谁在生效 —— 否则用户会在设置里存一个永远不生效的值，然后
+百思不得其解。
+
+### 三条不能破的线
+
+1. **完整令牌不回传渲染层。** `get_token_status` 只给 `source` / 尾 4 位 `hint` /
+   `envKey`。有测试断言序列化结果里不含完整令牌，并且**字段数固定为 3** ——
+   防的是哪天顺手往这个结构里加个 `token`。
+
+2. **完整令牌不进日志。** 日志只写掩码（`token::hint`）。另外给
+   `pure::redact_secrets` 补了 PAT 前缀规则（`ghp_` / `gho_` / `ghu_` / `ghs_` /
+   `ghr_` / `github_pat_`）兜底 —— 原有的 `SECRET_KEYS` 只认 `key=value` 形式，
+   裸令牌会漏网。
+
+3. **只发给 `api.github.com`。** 这条最容易写错：**不能把 `Authorization` 塞进
+   `default_headers`**，因为 `client()` 同时被 npm registry 的请求用着，那等于把
+   GitHub 凭据递给第三方主机。收成**唯一一道闸门** `token_for(url)`，按 URL 前缀逐个请求判定（带尾斜杠，
+   `https://api.github.com.evil.com/` 和 `https://api.github.com@evil.com/`
+   都匹配不上），`raw.githubusercontent.com` 也故意不带 —— 公开仓库的 README /
+   package.json 不需要认证，少一处接触凭据就少一份风险。跨主机重定向还有一层：
+   reqwest 的 `remove_sensitive_headers` 换主机就摘掉 `Authorization`
+   （已核对 0.12 的 `redirect.rs`）。
+
+### 保存前先联网验一次
+
+`set_github_token` 的顺序是 **形状校验 → `probe_token` 打一次 `/rate_limit` → 才写入**：
+
+* **401 → 不保存**，直接说"令牌无效或已过期"。否则市场只会继续以"限流"的面目
+  失败，用户根本想不到是令牌打错了。
+* **网络不通 → 照样保存**，但如实说"没能联网校验"。用户很可能正是因为连不上或被
+  限流才来配这个，这时候拦着他存没道理。
+* **成功 → 回传实际额度**（"令牌有效，配额 5000 次/小时"），让人一眼看到生效了。
+
+形状校验只拦空值、空白字符、非 ASCII、过短。**不做前缀白名单** —— classic
+（`ghp_`）、fine-grained（`github_pat_`）、OAuth（`gho_`）以及将来的新格式，
+白名单只会挡住合法令牌。拦空白字符是因为"粘贴时带进换行"太常见，那种值塞进
+HTTP 头只会换回一条看不懂的错误，比直接说"格式不对"难查得多。
+
+权限方面：公开仓库只读**不需要勾任何 scope**，一个空 scope 的 classic token 就够。
+这句写进了设置项的 tooltip，免得用户顺手给个 `repo` 全权。
+
+### 怎么在没有有效令牌的情况下验证
+
+* 形状合法但不存在的令牌 → GitHub 回 **401 Bad credentials**。这同时证明
+  `Authorization` 头**确实发到了对面**而不是被我们自己吞掉（否则拿到的会是
+  403 限流或者 200）。
+* 用假令牌走一遍取令牌那道闸门，三条都打印确认过：`api.github.com` 的请求带头，
+  `registry.npmjs.org` 和 `raw.githubusercontent.com` 的请求不带。
+* 凭据往返：写 → 读回一致 → 覆盖写生效 → 删 → 读不到 → 重复删仍成功（幂等）。
+
+限流提示也跟着分了口径：带着令牌还被限，就不能再说"未登录 60 次/小时、全办公室
+共用"（那是误导）；没带令牌时反过来要告诉用户"设置里配个令牌可提到 5000"。

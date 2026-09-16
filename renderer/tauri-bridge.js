@@ -63,6 +63,11 @@
     pluginAnalyzeStop: () => invoke('plugin_analyze_stop'),
     analysisHistory: (source, ref) => invoke('analysis_history', { source, ref }),
 
+    // --- GitHub 令牌（后端存凭据管理器，这里只传明文进去、拿掩码回来）---
+    getTokenStatus: () => invoke('get_token_status'),
+    setGithubToken: (token) => invoke('set_github_token', { token }),
+    clearGithubToken: () => invoke('clear_github_token'),
+
     // --- 事件（main -> renderer）---
     onLog: on('log'),
     onState: on('state'),

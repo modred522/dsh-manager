@@ -19,6 +19,43 @@ const MARKET_BATCH: usize = 20; // 每次返回给渲染层的条数
 const NPM_MAX_FROM: usize = 500; // npm 搜索偏移上限（防御性终止）
 const GH_MAX_PAGE: usize = 50; // GitHub 搜索最多 1000 条（20 条/页 × 50 页）
 
+/// 唯一允许带令牌的前缀。带尾斜杠是关键：`https://api.github.com.evil.com/`
+/// 和 `https://api.github.com@evil.com/` 都不以它开头，匹配不上。
+const GH_API: &str = "https://api.github.com/";
+
+fn is_github_api(url: &str) -> bool {
+    url.starts_with(GH_API)
+}
+
+/// 这个请求该用哪个令牌 —— **白名单之外一律 `None`**。
+///
+/// 这是唯一一道闸门：要带令牌的判断只写在这里一处，`with_token` 只管照着贴。
+/// 早先的写法在 `fetch_json` 里又算了一遍同样的条件，改一处漏一处就会让
+/// 限流提示说反话。
+///
+/// **不能图省事塞进 `default_headers`**：`client()` 同时被 npm registry 的请求
+/// 用着，那等于把 GitHub 凭据递给第三方主机。这里按 URL 主机名判定，
+/// 靠数据保证而不是靠调用方自觉。
+///
+/// `raw.githubusercontent.com` 也故意不带 —— 公开仓库的 README / package.json
+/// 不需要认证，少一个地方接触凭据就少一份风险。
+///
+/// 跨主机重定向不用担心：reqwest 的 `remove_sensitive_headers` 会在换主机时
+/// 摘掉 `Authorization`（已核对 reqwest 0.12 的 redirect.rs）。
+fn token_for(url: &str) -> Option<String> {
+    if !is_github_api(url) {
+        return None;
+    }
+    crate::token::load()
+}
+
+fn with_token(req: reqwest::RequestBuilder, token: Option<&str>) -> reqwest::RequestBuilder {
+    match token {
+        Some(t) => req.bearer_auth(t),
+        None => req,
+    }
+}
+
 fn client() -> Option<reqwest::Client> {
     reqwest::Client::builder()
         // GitHub 接口必须带 User-Agent，否则 403。
@@ -129,7 +166,7 @@ fn mask_ipv4(s: &str) -> String {
 /// 未登录接口是**按出口 IP** 限 60 次/小时：公司网络走 NAT 的话，这 60 次是
 /// 整个办公室共用的，随时可能不是自己用掉的。所以"什么时候能再试"比
 /// "被限流了"有用得多。
-fn rate_limit_reset_hint(headers: &reqwest::header::HeaderMap) -> Option<String> {
+fn rate_limit_reset_hint(headers: &reqwest::header::HeaderMap, authorized: bool) -> Option<String> {
     let remaining: u64 = headers
         .get("x-ratelimit-remaining")?
         .to_str()
@@ -147,10 +184,14 @@ fn rate_limit_reset_hint(headers: &reqwest::header::HeaderMap) -> Option<String>
         .parse()
         .ok()?;
     let at = chrono::DateTime::from_timestamp(reset, 0)?.with_timezone(&chrono::Local);
-    Some(format!(
-        "（未登录接口按出口 IP 限 60 次/小时，公司网络是整个办公室共用这个额度；{} 恢复）",
-        at.format("%H:%M")
-    ))
+    let when = at.format("%H:%M");
+    Some(if authorized {
+        format!("（已带令牌，5000 次/小时的额度也用光了；{when} 恢复）")
+    } else {
+        format!(
+            "（未登录接口按出口 IP 限 60 次/小时，公司网络是整个办公室共用这个额度；             {when} 恢复。设置里配一个 GitHub 令牌可提到 5000 次/小时）"
+        )
+    })
 }
 
 /// 取 JSON，失败时带回具体原因。
@@ -158,10 +199,14 @@ fn rate_limit_reset_hint(headers: &reqwest::header::HeaderMap) -> Option<String>
 /// GitHub 出错会把原因写在 body 的 `message` 里（403 是 "API rate limit
 /// exceeded for …"，404 是 "Not Found"），照抄它比自己猜准得多。
 async fn fetch_json(c: &reqwest::Client, url: &str) -> Result<serde_json::Value, String> {
-    let res = c.get(url).send().await.map_err(|e| describe_error(&e))?;
+    let token = token_for(url);
+    let res = with_token(c.get(url), token.as_deref())
+        .send()
+        .await
+        .map_err(|e| describe_error(&e))?;
     let status = res.status();
     // 限流信息只在响应头里，得在 text() 把响应吃掉之前取出来。
-    let reset_hint = rate_limit_reset_hint(res.headers());
+    let reset_hint = rate_limit_reset_hint(res.headers(), token.is_some());
     let body = res.text().await.map_err(|e| describe_error(&e))?;
     let json: serde_json::Value = serde_json::from_str(&body)
         .map_err(|e| format!("HTTP {} 但响应不是 JSON：{e}", status.as_u16()))?;
@@ -177,6 +222,47 @@ async fn fetch_json(c: &reqwest::Client, url: &str) -> Result<serde_json::Value,
         return Err(out);
     }
     Ok(json)
+}
+
+/// 用给定令牌探一次 `/rate_limit`，回传 core 额度上限。
+///
+/// 存之前先验：无效令牌存进去，市场只会继续以"限流"的面目失败，用户根本
+/// 想不到是令牌打错了。
+///
+/// 这里直接 `bearer_auth` 而没过 `token_for()` —— 因为待验的令牌还没保存，
+/// `token::load()` 取不到。URL 是写死的 `{GH_API}rate_limit`，仍在白名单内。
+pub async fn probe_token(token: &str) -> Result<u64, String> {
+    let c = client().ok_or("创建 HTTP 客户端失败")?;
+    let url = format!("{GH_API}rate_limit");
+    debug_assert!(is_github_api(&url));
+    let res = c
+        .get(&url)
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| describe_error(&e))?;
+    let status = res.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        return Err("令牌无效或已过期（HTTP 401）".into());
+    }
+    let body = res.text().await.map_err(|e| describe_error(&e))?;
+    let j: serde_json::Value = serde_json::from_str(&body)
+        .map_err(|e| format!("HTTP {} 但响应不是 JSON：{e}", status.as_u16()))?;
+    if !status.is_success() {
+        let m = j
+            .get("message")
+            .and_then(|v| v.as_str())
+            .map(sanitize_api_message);
+        return Err(match m {
+            Some(m) if !m.is_empty() => format!("HTTP {}：{m}", status.as_u16()),
+            _ => format!("HTTP {}", status.as_u16()),
+        });
+    }
+    j.get("resources")
+        .and_then(|r| r.get("core"))
+        .and_then(|c| c.get("limit"))
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| "响应里没有 core 额度字段".to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -418,11 +504,7 @@ async fn fetch_npm_page(query: &str, from: usize) -> Option<Vec<serde_json::Valu
         "https://registry.npmjs.org/-/v1/search?text={}&size={NPM_PAGE_SIZE}&from={from}",
         urlencode(query)
     );
-    let res = client()?.get(url).send().await.ok()?;
-    if !res.status().is_success() {
-        return None;
-    }
-    let j: serde_json::Value = res.json().await.ok()?;
+    let j = fetch_json(&client()?, &url).await.ok()?;
     Some(
         j.get("objects")?
             .as_array()?
@@ -437,11 +519,8 @@ async fn fetch_github_page(query: &str, page: usize) -> Option<Vec<serde_json::V
         "https://api.github.com/search/repositories?q={}&per_page={GH_PAGE_SIZE}&page={page}&sort=stars",
         urlencode(query)
     );
-    let res = client()?.get(url).send().await.ok()?;
-    if !res.status().is_success() {
-        return None; // 403 限流或其它错误
-    }
-    let j: serde_json::Value = res.json().await.ok()?;
+    // 走 fetch_json 顺带让搜索也吃到令牌：搜索接口未登录是 10 次/分，带令牌 30 次/分。
+    let j = fetch_json(&client()?, &url).await.ok()?;
     Some(j.get("items")?.as_array()?.clone())
 }
 
@@ -1208,18 +1287,90 @@ mod tests {
     fn rate_limit_hint_only_when_quota_is_gone() {
         use reqwest::header::{HeaderMap, HeaderValue};
         let mut h = HeaderMap::new();
-        assert!(rate_limit_reset_hint(&h).is_none(), "没有头就别猜");
+        assert!(rate_limit_reset_hint(&h, false).is_none(), "没有头就别猜");
 
         h.insert("x-ratelimit-remaining", HeaderValue::from_static("0"));
         h.insert("x-ratelimit-reset", HeaderValue::from_static("1789541888"));
-        let hint = rate_limit_reset_hint(&h).expect("配额耗尽时要给出恢复时间");
+        let hint = rate_limit_reset_hint(&h, false).expect("配额耗尽时要给出恢复时间");
         assert!(hint.contains("60 次/小时"), "{hint}");
         assert!(hint.contains("恢复"), "{hint}");
+        // 没带令牌时要告诉用户还有这条出路。
+        assert!(hint.contains("5000"), "该提示配令牌可提额度: {hint}");
+
+        // 带了令牌还被限，就不能再说"未登录 60 次/小时"了 —— 那是误导。
+        let authed = rate_limit_reset_hint(&h, true).expect("带令牌也要给恢复时间");
+        assert!(authed.contains("已带令牌"), "{authed}");
+        assert!(!authed.contains("60 次/小时"), "口径串了: {authed}");
 
         h.insert("x-ratelimit-remaining", HeaderValue::from_static("42"));
         assert!(
-            rate_limit_reset_hint(&h).is_none(),
+            rate_limit_reset_hint(&h, false).is_none(),
             "还有 42 次余量，不该报成限流"
+        );
+    }
+
+    /// 令牌只许发给 api.github.com。这条要是松了，等于把 GitHub 凭据
+    /// 递给 npm registry 或者任意一个把主机名拼在前缀里的域名。
+    #[test]
+    fn token_host_gate_is_exact() {
+        assert!(is_github_api("https://api.github.com/repos/o/r"));
+        assert!(is_github_api(
+            "https://api.github.com/search/repositories?q=x"
+        ));
+
+        // npm 侧的请求一个都不许带。
+        assert!(!is_github_api("https://registry.npmjs.org/some-pkg"));
+        assert!(!is_github_api("https://api.npmjs.org/downloads/point/x"));
+        // 公开仓库的 raw 文件不需要认证，也不给。
+        assert!(!is_github_api(
+            "https://raw.githubusercontent.com/o/r/HEAD/README.md"
+        ));
+        // 把主机名拼进前缀的几种老套路。
+        assert!(!is_github_api("https://api.github.com.evil.com/repos/o/r"));
+        assert!(!is_github_api("https://api.github.com@evil.com/repos/o/r"));
+        assert!(!is_github_api("https://evil.com/https://api.github.com/x"));
+        // 明文 http 也不给：令牌不能走未加密连接。
+        assert!(!is_github_api("http://api.github.com/repos/o/r"));
+    }
+
+    /// 形状合法但不存在的令牌，GitHub 会回 401。
+    ///
+    /// 这条同时证明了两件事：保存前的校验能挡住废令牌，以及 `Authorization`
+    /// 头**确实发到了对面**而不是被我们自己吞掉 —— 否则拿到的会是 403 限流
+    /// 或者 200，而不是 401。没有有效令牌也能验的办法。
+    #[tokio::test]
+    async fn probe_rejects_a_bogus_token() {
+        let e = probe_token("ghp_00000000000000000000000000000000000000")
+            .await
+            .unwrap_err();
+        if e.starts_with("连接失败") || e.starts_with("请求超时") {
+            return; // 无外网环境，跳过
+        }
+        assert!(e.contains("401"), "假令牌应当被 401 拒掉，实际: {e}");
+    }
+
+    /// 白名单之外的主机，`token_for` 必须回 `None` —— 有没有令牌都一样。
+    #[test]
+    fn token_for_never_leaks_past_the_allowlist() {
+        for u in [
+            "https://registry.npmjs.org/some-pkg",
+            "https://api.npmjs.org/downloads/point/last-week/x",
+            "https://raw.githubusercontent.com/o/r/HEAD/README.md",
+            "https://api.github.com.evil.com/repos/o/r",
+            "http://api.github.com/repos/o/r",
+        ] {
+            assert!(token_for(u).is_none(), "{u} 不该拿到令牌");
+        }
+    }
+
+    /// 没有令牌时不该凭空长出一个 Authorization 头。
+    #[tokio::test]
+    async fn no_auth_header_without_a_token() {
+        let c = client().unwrap();
+        let req = with_token(c.get(GH_API), None).build().unwrap();
+        assert!(
+            req.headers().get(reqwest::header::AUTHORIZATION).is_none(),
+            "没令牌却带了 Authorization"
         );
     }
 

@@ -112,6 +112,14 @@
           <span data-i18n="setInterval">检查间隔(小时)</span>
           <input type="number" id="txtInterval" min="1" max="720" />
         </div>
+        <div class="field">
+          <span data-i18n="setGithubToken" data-i18n-title="tokenScopeHint">GitHub 令牌（可选）</span>
+          <input type="password" id="txtToken" spellcheck="false" autocomplete="off"
+                 data-i18n-ph="tokenPh" />
+          <button id="btnTokenSave" class="btn btn-small" data-i18n="btnTokenSave">保存</button>
+          <button id="btnTokenClear" class="btn btn-small" data-i18n="btnTokenClear">清除</button>
+        </div>
+        <div id="tokenState" class="token-state"></div>
         <div class="tools">
           <button id="btnConfigDir" class="btn btn-small" data-i18n="btnConfigDir">配置目录</button>
           <button id="btnNpmDir" class="btn btn-small" data-i18n="btnNpmDir">安装目录</button>

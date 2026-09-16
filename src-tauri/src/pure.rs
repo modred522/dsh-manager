@@ -243,11 +243,16 @@ pub fn split_log_chunk(chunk: &str) -> Vec<String> {
 const SECRET_KEYS: &str =
     r"tokens?|access[_-]?token|refresh[_-]?token|api[_-]?keys?|apikey|secret|password|passwd|pwd";
 
+/// GitHub 令牌的已知前缀。`SECRET_KEY_RE` 只认 `key=value` 形式，裸令牌漏网；
+/// 令牌本来就不该进日志（见 token.rs 铁律 2），这条是兜底。
+const GITHUB_PAT_RE: &str = r"\b(gh[pousr]_|github_pat_)[A-Za-z0-9_]{10,}";
+
 struct SecretRes {
     kv: Regex,
     json_kv: Regex,
     bearer: Regex,
     sk: Regex,
+    pat: Regex,
 }
 
 static SECRET_RES: LazyLock<SecretRes> = LazyLock::new(|| SecretRes {
@@ -257,6 +262,7 @@ static SECRET_RES: LazyLock<SecretRes> = LazyLock::new(|| SecretRes {
     json_kv: Regex::new(&format!(r#"(?i)"({SECRET_KEYS})"\s*:\s*"[^"]*""#)).unwrap(),
     bearer: Regex::new(r"(?i)\b(Bearer)\s+[A-Za-z0-9._~+/-]+=*").unwrap(),
     sk: Regex::new(r"\bsk-[A-Za-z0-9_-]{8,}").unwrap(),
+    pat: Regex::new(GITHUB_PAT_RE).unwrap(),
 });
 
 /// 日志里的敏感值打码。
@@ -268,7 +274,8 @@ pub fn redact_secrets(line: &str) -> String {
     let s = re.kv.replace_all(line, "$1=***");
     let s = re.json_kv.replace_all(&s, r#""$1": "***""#);
     let s = re.bearer.replace_all(&s, "$1 ***");
-    re.sk.replace_all(&s, "sk-***").into_owned()
+    let s = re.sk.replace_all(&s, "sk-***");
+    re.pat.replace_all(&s, "$1***").into_owned()
 }
 
 // ---------------------------------------------------------------------------
@@ -406,6 +413,34 @@ mod tests {
             vec!["trailing spaces"]
         );
         assert!(split_log_chunk("").is_empty());
+    }
+
+    /// 裸令牌（不带 `key=` 前缀）也得打掉。
+    ///
+    /// `SECRET_KEYS` 那套只认 `token=xxx` 形式，一条单独出现的 `ghp_...`
+    /// 会整条落进日志。令牌本来就不该走到这儿（见 token.rs 铁律 2），这是兜底。
+    #[test]
+    fn redact_secrets_masks_bare_github_tokens() {
+        assert_eq!(
+            redact_secrets("clone 失败: ghp_0123456789abcdefghijABCDEF"),
+            "clone 失败: ghp_***"
+        );
+        assert_eq!(
+            redact_secrets("github_pat_11ABCDEFG0abcdefghij"),
+            "github_pat_***"
+        );
+        // 五种前缀都认。
+        for p in ["ghp_", "gho_", "ghu_", "ghs_", "ghr_"] {
+            let line = format!("{p}0123456789abcdefghij");
+            assert_eq!(redact_secrets(&line), format!("{p}***"), "漏了 {p}");
+        }
+        // 别误伤长得像的普通词。
+        assert_eq!(redact_secrets("ghost_town"), "ghost_town");
+        assert_eq!(redact_secrets("ghs_short"), "ghs_short");
+        assert_eq!(
+            redact_secrets("要填 ghp_ 开头的令牌"),
+            "要填 ghp_ 开头的令牌"
+        );
     }
 
     #[test]
