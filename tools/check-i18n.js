@@ -119,6 +119,32 @@ for (const f of CONSUMERS) {
 if (!failures.length) console.log('共享全局未被遮蔽: ok');
 
 // ---------------------------------------------------------------------------
+// 4. CSS：写死宽度 + nowrap 且不处理溢出
+// ---------------------------------------------------------------------------
+// 真实事故：`.project-val` 写 `width: 110px` 配 `white-space: nowrap`，而文案
+// "输出 11.7 万 · 共 262.9 万 · 12 会话" 实测 191px。可见溢出会把祖先的可滚动区域
+// 顶宽，用量页就多出一条横向滚动条，右侧数值还被切在窗口外。
+//
+// 另一半原因值得记一笔：`.tab-page.scrollable` 只写了 `overflow-y: auto`，但 CSS
+// 规定一轴非 visible 时另一轴的 visible 会被提升为 auto —— 所以横向滚动条是它自己的，
+// 查 documentElement 的 scrollWidth 根本看不出来。
+{
+  const css = fs.readFileSync('renderer/styles.css', 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  let n = 0;
+  for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const sel = m[1].trim().replace(/\s+/g, ' ');
+    const body = m[2];
+    if (!/\bwhite-space:\s*nowrap/.test(body)) continue;
+    const w = body.match(/(?<!min-)(?<!max-)\bwidth:\s*([\d.]+px)/);
+    if (!w) continue;
+    if (/\boverflow(-x)?:\s*(hidden|auto|scroll|clip)/.test(body) || /text-overflow/.test(body)) continue;
+    n++;
+    fail(`renderer/styles.css: ${sel} 写死 width: ${w[1]} 又是 nowrap，且没有溢出处理 —— 文本会溢出容器并顶出横向滚动条。改用 min-width（按内容撑开），或加 overflow: hidden + text-overflow: ellipsis`);
+  }
+  if (!n) console.log('CSS 固定宽度 + nowrap 溢出风险: ok');
+}
+
+// ---------------------------------------------------------------------------
 console.log('');
 if (failures.length) {
   console.log(`${failures.length} 项检查未通过。`);
