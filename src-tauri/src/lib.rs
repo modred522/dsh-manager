@@ -245,6 +245,25 @@ fn get_recent_logs() -> Vec<String> {
     logging::recent_log_lines()
 }
 
+/// 渲染层自身的错误回传到后端日志。
+///
+/// 存在的理由：桥接层失败（比如 capability 没给 `core:event:default` 导致 `listen()`
+/// 被拒）原先只会显示在界面的日志区，**落不到日志文件**，于是启动烟测、CI 一概看不见——
+/// 前端事件通道整条死掉，自动化检查却全绿。现在这类错误会进日志文件，
+/// 烟测就能把它当失败信号。
+///
+/// 注意这个命令走 `invoke`（自定义命令不受 ACL 管），所以哪怕事件权限坏了它照样能用。
+#[tauri::command]
+fn log_frontend_error(message: String) {
+    let msg = message.trim();
+    if msg.is_empty() {
+        return;
+    }
+    // 截断一下，别让前端的长堆栈把日志文件撑爆。
+    let shown: String = msg.chars().take(500).collect();
+    logging::log(format!("[前端错误] {shown}"));
+}
+
 #[tauri::command]
 async fn set_config(app: AppHandle, cfg: serde_json::Value) -> Result<(), String> {
     let st = app.state::<AppState>();
@@ -1481,6 +1500,7 @@ pub fn run() {
             stop_dsh,
             restart_dsh,
             get_recent_logs,
+            log_frontend_error,
             set_config,
             open_config_dir,
             open_npm_dir,

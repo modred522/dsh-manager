@@ -70,12 +70,13 @@
     onAnalyzeDone: on('analyze-done'),
   };
 
-  // 迁移期间部分命令还没实现（后端返回"尚未实现"）。渲染层的调用点大多没接
+  // 桥接层出问题时（后端命令未实现、权限被拒、参数不匹配…）渲染层的调用点大多没接
   // catch，不兜底的话用户只会看到页面一片空白、控制台里一条 unhandled rejection。
-  // 这里把它显示到界面的日志区，让"还没做"和"坏了"能区分开。
   window.addEventListener('unhandledrejection', (e) => {
     const msg = String((e.reason && e.reason.message) || e.reason || '');
     if (!msg) return;
+
+    // ① 显示到界面日志区，让"还没做"和"坏了"能区分开。
     const box = document.getElementById('log');
     if (box) {
       const row = document.createElement('div');
@@ -84,6 +85,16 @@
       box.appendChild(row);
       box.scrollTop = box.scrollHeight;
     }
+
+    // ② 同时回传后端写进日志文件。只显示在 DOM 里的话，启动烟测和 CI 都看不见——
+    //    capability 漏配（listen 被拒、前端事件通道整条死掉）就是这么溜过去的。
+    //    走 invoke 而不是事件，因为自定义命令不受 ACL 管，事件权限坏了它也能用。
+    try {
+      invoke('log_frontend_error', { message: msg }).catch(() => {});
+    } catch {
+      // 连 invoke 都没有就只能放弃了。
+    }
+
     e.preventDefault();
   });
 })();

@@ -348,3 +348,58 @@ Rust 版把它变成了代码：`clean_analysis_sessions()` 删之前先断言�
    CI 换成 `cargo test` + `clippy` + `tauri build`。
 4. **`renderer/` 里那份 `compareVersions` 重复** —— Electron 侧退场后即可删掉，
    改为 `invoke` 调后端（GOTCHAS 4.8 记的"两处要同步改"就此消失）。
+
+---
+
+## 十三、真机验收发现的问题
+
+GUI 真机验收抓到两个我这边所有自动检查都看不见的问题。两个都属于同一类：
+**Tauri 特有的运行期行为，编译和单测完全无感。**
+
+### 1. 市场窗口白屏 / 关不掉 / 比主窗口活得久
+
+三个症状同一个原因：Windows 上 `WebviewWindowBuilder::build()` 会把建窗任务投给
+事件循环**再阻塞等结果**，而同步 `#[tauri::command]` 就跑在事件循环所在的主线程上 ——
+互相等死。窗口出来了但 webview 永远初始化不完（白屏）、消息循环卡死（关不掉）、
+最后变成游离窗口。
+
+`open_market` 改成 `async` 即解（async 命令跑在 async runtime 上，不占事件循环）。
+全树只有另一处建窗在 `setup()` 里、事件循环启动前，属安全位置。
+
+### 2. **没有 capability 文件 = 前端一个事件都收不到**
+
+日志区出现 `event.listen not allowed. Permissions associated with this command:
+core:event:allow-listen, core:event:default`。
+
+原因：`src-tauri/capabilities/` 目录我压根没建。官方文档写得很清楚 ——
+**"There is no auto-generated default capability; you must define your own."**
+目录不存在就等于一条权限都不授予。
+
+后果比看起来严重得多：`invoke` 调自定义命令不受 ACL 管，所以"点一下刷一次"的数据
+全是正常的，界面看着能用；但 `listen()` 被拒意味着 **`log` / `state` /
+`analyze-log` / `analyze-done` 四个事件一个都收不到** —— 实时日志、6 秒状态轮询、
+分析的流式输出全部静默失效。
+
+修法是 `capabilities/default.json` 授予 `core:event:default`（含
+allow-listen/unlisten/emit/emit-to），`windows` 限定 `["main", "market"]`。
+
+### 这两个 bug 暴露的验证盲区（已补）
+
+启动烟测原先只能证明"进程起得来、没崩、没乱动环境"，**证明不了前端和后端的通道是通的**。
+桥接层的失败只写进 DOM 的日志区，落不到日志文件，所以烟测和 CI 全都看不见。
+
+补法：`log_frontend_error` 命令把渲染层的 unhandledrejection 回传到后端日志文件
+（走 `invoke` 而非事件 —— 自定义命令不受 ACL 管，所以事件权限坏了它照样能用），
+烟测再断言日志里不许出现 `[前端错误]`。
+
+**这道防线做了反向验证**：故意把 `capabilities/` 挪走重新构建，烟测如实报出
+`Command plugin:event|listen not allowed by ACL`（两条，正好对应主窗口的
+`onLog` + `onState`）；放回去重建后归零。所以它不是"无病时全绿"的摆设。
+
+### 顺带记一个差点让我误判的坑
+
+**新增或移动 `capabilities/` 下的文件，不会可靠地触发 build script 重跑。**
+我把目录移回来后直接 `tauri build`，产物里仍是没有权限的旧 ACL，烟测继续报错，
+一度以为 `core:event:default` 不含 `allow-listen`（查 `gen/schemas/acl-manifests.json`
+确认它是含的）。`touch src-tauri/build.rs` 强制重跑后才对。
+改 capability 之后请务必确认产物真的重建了。

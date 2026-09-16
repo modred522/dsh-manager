@@ -1,0 +1,9 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "渲染层需要的最小权限集。Tauri 2 不会自动生成默认 capability —— 目录不存在就等于一条权限都不授予，表现是 listen() 被拒、前端收不到任何事件（实时日志、状态轮询、分析流式输出全部静默失效）。",
+  "windows": ["main", "market"],
+  "permissions": [
+    "core:event:default"
+  ]
+}
