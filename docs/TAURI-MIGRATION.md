@@ -485,7 +485,7 @@ npm 侧没动：它的详情接口没有这种限流（13:51 的检查更新正�
 ### 顺带补上：`tauri` 分支漏掉了锁文件的 registry 修复
 
 `tauri` 分支是在 `main` 修掉锁文件之前分出去的，所以它的 `package-lock.json`
-里还有 **25 处 `http://qa.leihuo.netease.com/npm/`**（全是 `@tauri-apps/*`，
+里还有 **25 处指向内网 npm 镜像的地址**（全是 `@tauri-apps/*`，
 本机 `npm config get registry` 指向的就是这个内网镜像），而且它的 `check.yml`
 里没有那条守卫 —— 于是同一个问题在这个分支上静默存在到现在。这本身就说明
 守卫必须跟着分支走，不能只加在出事的那一支上。
