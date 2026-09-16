@@ -5,32 +5,69 @@ on:
   pull_request:
 
 jobs:
-  syntax:
+  # Rust 侧必须在 windows-latest 上跑。这个应用只面向 Windows（COM 建快捷方式、
+  # 凭据管理器、tasklist 探活），相当一部分测试带 #[cfg(windows)] ——
+  # 在 Linux 上跑等于把它们静默跳过，绿灯却什么都没验。
+  rust:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: src-tauri
+    steps:
+      - uses: actions/checkout@v4
+
+      # runner 自带 stable 工具链（含 rustfmt / clippy），不引第三方 action。
+      - name: Toolchain
+        run: |
+          rustc -V
+          cargo -V
+          cargo fmt --version
+          cargo clippy --version
+
+      # Tauri 的依赖树很大，冷编译要好几分钟。key 跟着 Cargo.lock 走。
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            src-tauri/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      # 少数用例会联网（npm registry / GitHub API）。它们都写成"连不上或被限流
+      # 就跳过断言"，不会因为网络把 CI 弄红；而 credential_store_round_trip 会
+      # 真的读写凭据管理器（用一次性条目名、用完删掉）。
+      - name: Tests
+        run: cargo test
+
+  renderer:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+
       - name: Syntax check (node --check)
         run: |
-          node --check main.js
-          node --check preload.js
-          node --check lib/pure.js
-          node --check lib/market.js
           node --check renderer/renderer.js
           node --check renderer/market.js
+          node --check renderer/i18n.js
+          node --check renderer/tauri-bridge.js
+          node --check tools/check-i18n.js
+          node --check tools/set-version.js
 
-      - name: Unit tests (node:test)
-        run: npm test
-
-      # 漏列 files 白名单不会有构建报错，但装出来一启动就 Cannot find module（v1.0.5 事故）。
-      - name: Packaging completeness (require vs electron-builder files)
-        run: node tools/check-package.js
-
-      # 渲染层的三份脚本共享一个全局作用域，局部变量重名会静默遮蔽 i18n 的 t()；
-      # 这类错误藏在 async 调用链里，界面只是少渲染一块，不会报错。
-      - name: Renderer self-check (i18n / DOM ids / shadowed globals)
+      # 渲染层的三份脚本共享一个全局作用域，局部变量重名会静默遮蔽 i18n 的 t()
+      # （用量页的项目排行和趋势图就这么消失过）。这一步还检查 i18n 键集对齐、
+      # DOM id 对齐，以及"写死宽度 + nowrap 不处理溢出"的横向滚动条风险。
+      - name: Renderer self-check (i18n / DOM ids / shadowed globals / CSS)
         run: node tools/check-i18n.js
 
       # 锁文件里只允许公共 registry。在配了私有镜像的机器上跑 npm install 会把
@@ -45,3 +82,11 @@ jobs:
             exit 1
           fi
           echo "锁文件全部指向公共 registry"
+
+      # 发版靠它把版本号写进三处 manifest；写错了要到装机后才发现，所以在 CI 里
+      # 空跑一次确认匹配仍然有效（脚本自带回读校验），跑完还原。
+      - name: Version stamping still works
+        run: |
+          node tools/set-version.js 9.9.9-ci
+          git diff --stat
+          git checkout -- package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json

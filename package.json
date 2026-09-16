@@ -1,14 +1,12 @@
 {
   "name": "dsh-manager",
   "version": "1.0.0",
-  "description": "DSH (DeepSeek Harness) 桌面管理器 — Electron 版",
-  "main": "main.js",
+  "description": "DSH (DeepSeek Harness) 桌面管理器 — Tauri 2 版",
   "scripts": {
-    "start": "electron .",
-    "test": "node --test --test-isolation=none",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "check:renderer": "node tools/check-i18n.js"
   },
   "author": "",
   "license": "MIT",
@@ -20,11 +18,7 @@
   "bugs": {
     "url": "https://github.com/modred522/dsh-manager/issues"
   },
-  "dependencies": {
-    "electron-updater": "^6.3.9"
-  },
   "devDependencies": {
-    "electron": "^43.4.0",
     "@tauri-apps/cli": "^2"
   }
-}
+}

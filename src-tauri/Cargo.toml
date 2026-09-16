@@ -37,7 +37,7 @@ tokio = { version = "1", features = ["process", "io-util", "time", "sync", "rt",
 # 进程探测。取代 Electron 版的两个外部进程调用：
 #   netstat2 -> 原来 spawn `netstat -ano` 再解析文本（IPv4/IPv6 都覆盖，dsh 走 Node 默认双栈监听）
 #   sysinfo  -> 原来 spawn powershell 跑 find-dsh.ps1 走 WMI（且自带 CPU 采样，不用手算 100ns 差值）
-# 这两个换掉之后 find-dsh.ps1 可以删除，GOTCHAS 第一节的 PowerShell 编码坑一并消失。
+# 这两个换掉之后 find-dsh.ps1 已删除（Electron 退场那一批），GOTCHAS 第一节的 PowerShell 编码坑一并消失。
 netstat2 = "0.11"
 sysinfo = "0.39"
 
