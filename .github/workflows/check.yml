@@ -27,3 +27,16 @@ jobs:
       # 漏列 files 白名单不会有构建报错，但装出来一启动就 Cannot find module（v1.0.5 事故）。
       - name: Packaging completeness (require vs electron-builder files)
         run: node tools/check-package.js
+
+      # 锁文件里只允许公共 registry。在配了私有镜像的机器上跑 npm install 会把
+      # 内网地址写进 resolved，CI 与外部贡献者都拉不到（v1.0.6 首次发版就是这么挂的），
+      # 而且等于把内网主机名写进公开仓库。
+      - name: Lockfile uses the public registry only
+        run: |
+          bad=$(grep -oE '"resolved": "https?://[^/]+' package-lock.json | grep -v "registry.npmjs.org" || true)
+          if [ -n "$bad" ]; then
+            echo "package-lock.json 含非公共 registry 地址:"; echo "$bad" | sort -u
+            echo "修法: 把 resolved 里的私有镜像前缀替换回 https://registry.npmjs.org/"
+            exit 1
+          fi
+          echo "锁文件全部指向公共 registry"
