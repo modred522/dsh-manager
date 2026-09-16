@@ -312,8 +312,15 @@ fn open_external(app: AppHandle, url: String) -> bool {
     false
 }
 
+/// 打开插件市场独立窗口。
+///
+/// **这个命令必须是 `async` 的，别改回同步。** Windows 上
+/// `WebviewWindowBuilder::build()` 会把建窗任务投递给事件循环再阻塞等结果，
+/// 而同步 `#[tauri::command]` 就跑在事件循环所在的主线程上 —— 于是互相等死。
+/// 表现是：窗口出来了但永远白屏、关不掉、还比主窗口活得久。
+/// `async` 命令跑在 async runtime 上，不占着事件循环，才能正常建窗。
 #[tauri::command]
-fn open_market(app: AppHandle) -> Result<(), String> {
+async fn open_market(app: AppHandle) -> Result<(), String> {
     // 已打开则聚焦，否则新建（对齐 Electron 版 createMarketWindow）。
     if let Some(win) = app.get_webview_window("market") {
         let _ = win.unminimize();
@@ -1509,7 +1516,10 @@ pub fn run() {
             apply_theme(&handle, &cfg.theme);
             apply_autostart(&handle, cfg.auto_start_with_windows);
             register_global_shortcut(&handle);
-            if cfg.create_desktop_shortcut {
+            // 调试构建不自动建桌面快捷方式：`tauri dev` 的产物在 target/debug 下，
+            // 随时会被 cargo clean 掉，往用户桌面放一个指向它的链接纯属污染。
+            // 托盘菜单里那个「创建桌面快捷方式」仍然可用（用户明确要求时才建）。
+            if cfg.create_desktop_shortcut && !cfg!(debug_assertions) {
                 let _ = make_shortcut(&handle, true);
             }
 
@@ -1556,6 +1566,12 @@ pub fn run() {
                     api.prevent_close();
                     remember_bounds(win);
                     let _ = win.hide();
+                    // 主窗口收进托盘时把市场窗口也一并关掉：否则用户以为"管理器关了"，
+                    // 桌面上却还孤零零留着一个市场窗口。市场窗口没有未保存状态
+                    // （滚动位置与分栏比例都在 localStorage 里），关掉无损失。
+                    if let Some(market) = win.app_handle().get_webview_window("market") {
+                        let _ = market.close();
+                    }
                 }
             }
         })
