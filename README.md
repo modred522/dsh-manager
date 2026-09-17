@@ -56,7 +56,7 @@ npx tauri build                      # 出安装器；想直接跑开发模式�
 仍需要本机装有 **Node.js 与 dsh CLI**（管理器通过它们启动/更新 DSH）。
 
 1. 到 [Releases](https://github.com/modred522/dsh-manager/releases) 下载最新的
-   `DSH Manager_<版本>_x64-setup.exe`（约 2.3 MB）
+   `DSH.Manager_<版本>_x64-setup.exe`（约 2.3 MB；GitHub 会把文件名里的空格换成点）
 2. 双击安装（当前用户，无需管理员），自动创建桌面/开始菜单快捷方式
 3. 之后管理器会在启动时**检查**有没有新版本，有就提示你到发行页下载 ——
    「总览 → 设置」里的「检查管理器新版本」开关控制这个行为

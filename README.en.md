@@ -55,7 +55,8 @@ npx tauri build                      # builds the installer; use npx tauri dev t
 
 Node.js and the dsh CLI are still required on the machine (the manager uses them to start/update DSH).
 
-1. Download the latest `DSH Manager_<version>_x64-setup.exe` (about 2.3 MB) from
+1. Download the latest `DSH.Manager_<version>_x64-setup.exe` (about 2.3 MB; GitHub turns the space in the
+   filename into a dot) from
    [Releases](https://github.com/modred522/dsh-manager/releases)
 2. Run the installer (current user, no admin needed); desktop and start-menu shortcuts
    are created for you
