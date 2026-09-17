@@ -91,7 +91,7 @@ $dc.DrawText($sub1, (New-Object System.Windows.Point(562, 330)))
 $dc.DrawText($sub2, (New-Object System.Windows.Point(562, 380)))
 
 # tech pills
-$pills = @("Electron", "Windows", "MIT")
+$pills = @("Tauri 2", "Rust", "Windows", "MIT")
 $x = 562
 foreach ($p in $pills) {
     $txt = New-Text $p 20 $white "SemiBold"

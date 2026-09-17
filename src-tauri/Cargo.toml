@@ -1,0 +1,61 @@
+[package]
+name = "dsh-manager"
+version = "1.0.0"
+description = "DSH (DeepSeek Harness) 桌面管理器 — Tauri 版"
+authors = ["modred522"]
+license = "MIT"
+repository = "https://github.com/modred522/dsh-manager"
+edition = "2021"
+rust-version = "1.80"
+
+[lib]
+name = "dsh_manager_lib"
+path = "src/lib.rs"
+
+[[bin]]
+name = "dsh-manager"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-opener = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+regex = "1"
+chrono = "0.4"
+sys-locale = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+tokio = { version = "1", features = ["process", "io-util", "time", "sync", "rt", "macros"] }
+
+# 进程探测。取代 Electron 版的两个外部进程调用：
+#   netstat2 -> 原来 spawn `netstat -ano` 再解析文本（IPv4/IPv6 都覆盖，dsh 走 Node 默认双栈监听）
+#   sysinfo  -> 原来 spawn powershell 跑 find-dsh.ps1 走 WMI（且自带 CPU 采样，不用手算 100ns 差值）
+# 这两个换掉之后 find-dsh.ps1 已删除（Electron 退场那一批），GOTCHAS 第一节的 PowerShell 编码坑一并消失。
+netstat2 = "0.11"
+sysinfo = "0.39"
+
+[target.'cfg(windows)'.dependencies]
+tauri-plugin-single-instance = "2"
+# 建桌面快捷方式：Tauri 没有对应能力，只能自己走 COM 的 IShellLink。
+# 版本跟 tauri 传递进来的 windows crate 对齐，避免同时编两份。
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  # 可选的 GitHub 令牌走凭据管理器，不落明文配置（见 src/token.rs）。
+  "Win32_Security_Credentials",
+  "Win32_System_Com",
+  "Win32_UI_Shell",
+] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

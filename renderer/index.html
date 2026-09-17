@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost" />
   <title>DSH Manager</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -11,7 +11,7 @@
     <!-- 头部 -->
     <header class="card">
       <div class="header-left">
-        <img class="logo" src="../assets/whale.png" alt="whale" />
+        <img class="logo" src="whale.png" alt="whale" />
         <div class="header-text">
           <h1 data-i18n="appName">DSH 管理器</h1>
           <p data-i18n="appSub">DeepSeek Harness 桌面管理器</p>
@@ -78,7 +78,7 @@
         <label class="check"><input type="checkbox" id="chkAutoCheck" /> <span data-i18n="setAutoCheck">自动检查更新</span></label>
         <label class="check"><input type="checkbox" id="chkWatchdog" /> <span data-i18n="setWatchdog">崩溃自动重启</span></label>
         <label class="check"><input type="checkbox" id="chkCleanAnalysis" /> <span data-i18n="setCleanAnalysis">分析后清理分析会话</span></label>
-        <label class="check"><input type="checkbox" id="chkAutoUpdateManager" /> <span data-i18n="setAutoUpdateManager">自动更新管理器</span></label>
+        <label class="check"><input type="checkbox" id="chkAutoUpdateManager" /> <span data-i18n="setAutoUpdateManager">检查管理器新版本</span></label>
         <label class="check"><input type="checkbox" id="chkSilent" /> <span data-i18n="setSilent">启动时静默到托盘</span></label>
         <label class="check"><input type="checkbox" id="chkAutoStart" /> <span data-i18n="setAutoStart">开机自动运行</span></label>
         <div class="field">
@@ -112,6 +112,14 @@
           <span data-i18n="setInterval">检查间隔(小时)</span>
           <input type="number" id="txtInterval" min="1" max="720" />
         </div>
+        <div class="field">
+          <span data-i18n="setGithubToken" data-i18n-title="tokenScopeHint">GitHub 令牌（可选）</span>
+          <input type="password" id="txtToken" spellcheck="false" autocomplete="off"
+                 data-i18n-ph="tokenPh" />
+          <button id="btnTokenSave" class="btn btn-small" data-i18n="btnTokenSave">保存</button>
+          <button id="btnTokenClear" class="btn btn-small" data-i18n="btnTokenClear">清除</button>
+        </div>
+        <div id="tokenState" class="token-state"></div>
         <div class="tools">
           <button id="btnConfigDir" class="btn btn-small" data-i18n="btnConfigDir">配置目录</button>
           <button id="btnNpmDir" class="btn btn-small" data-i18n="btnNpmDir">安装目录</button>
@@ -245,6 +253,7 @@
   <!-- Toast 容器 -->
   <div id="toasts" class="toasts"></div>
 
+  <script src="tauri-bridge.js"></script>
   <script src="i18n.js"></script>
   <script src="renderer.js"></script>
 </body>

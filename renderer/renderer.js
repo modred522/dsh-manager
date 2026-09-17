@@ -27,6 +27,10 @@ const els = {
   chkAutoUpdateManager: $('chkAutoUpdateManager'),
   chkSilent: $('chkSilent'),
   selTheme: $('selTheme'),
+  txtToken: $('txtToken'),
+  btnTokenSave: $('btnTokenSave'),
+  btnTokenClear: $('btnTokenClear'),
+  tokenState: $('tokenState'),
   selLang: $('selLang'),
   selUpdateChannel: $('selUpdateChannel'),
   btnRollback: $('btnRollback'),
@@ -102,11 +106,11 @@ function appendLog(line) {
 
 // ---------------- Toast ----------------
 function showToast(msg, kind = 'info') {
-  const t = el('div', 'toast ' + kind, msg);
-  els.toasts.appendChild(t);
+  const node = el('div', 'toast ' + kind, msg);
+  els.toasts.appendChild(node);
   setTimeout(() => {
-    t.classList.add('leaving');
-    setTimeout(() => t.remove(), 320);
+    node.classList.add('leaving');
+    setTimeout(() => node.remove(), 320);
   }, 3000);
 }
 
@@ -303,12 +307,14 @@ function computeCost(u, cfg) {
 }
 
 function renderUsage(usage, cfg) {
-  const t = usage.totals || {};
-  els.statSessions.textContent = String(t.sessions || 0);
-  els.statOutput.textContent = fmtTokens(t.output);
-  els.statInput.textContent = fmtTokens(t.uncachedInput);
-  els.statCache.textContent = fmtTokens(t.cacheRead);
-  els.statCost.textContent = fmtCost(computeCost(t, cfg));
+  // 别把这个局部变量叫 t —— i18n.js 的 t() 是同一个全局作用域里的函数，
+  // 取名 t 会把它遮蔽掉，下面 t('projEmpty') 直接抛 "t is not a function"。
+  const tot = usage.totals || {};
+  els.statSessions.textContent = String(tot.sessions || 0);
+  els.statOutput.textContent = fmtTokens(tot.output);
+  els.statInput.textContent = fmtTokens(tot.uncachedInput);
+  els.statCache.textContent = fmtTokens(tot.cacheRead);
+  els.statCost.textContent = fmtCost(computeCost(tot, cfg));
 
   // 项目排行
   const projects = usage.projects || [];
@@ -455,6 +461,47 @@ function loadConfigIntoForm(cfg) {
   els.priceOutput.value = cfg.costOutput;
 }
 
+// ---------------- GitHub 令牌 ----------------
+// 令牌**不进 config.json**（那是明文），后端写 Windows 凭据管理器，所以它不在
+// collectConfig / saveConfig 那条"改哪项就整份存"的链上，得有自己的按钮。
+// 前端从头到尾只往后端送明文、只拿掩码回来，界面上不回显完整令牌。
+let lastTokenStatus = null;
+
+function renderTokenStatus(st) {
+  lastTokenStatus = st || null;
+  const source = (st && st.source) || 'none';
+  if (source === 'env') {
+    els.tokenState.textContent = t('tokenFromEnv', st.envKey, st.hint);
+  } else if (source === 'store') {
+    els.tokenState.textContent = t('tokenSaved', st.hint);
+  } else {
+    els.tokenState.textContent = t('tokenNone');
+  }
+  // 环境变量优先级更高，这时候存进去也不生效，干脆锁住别让人白忙。
+  const fromEnv = source === 'env';
+  els.txtToken.disabled = fromEnv;
+  els.btnTokenSave.disabled = fromEnv;
+  els.btnTokenClear.disabled = fromEnv || source === 'none';
+}
+
+async function saveToken() {
+  const v = els.txtToken.value.trim();
+  if (!v) return;
+  els.btnTokenSave.disabled = true;
+  els.tokenState.textContent = t('tokenVerifying');
+  const r = await window.dsh.setGithubToken(v);
+  // 不管成没成，输入框立刻清空 —— 令牌没理由继续留在 DOM 里。
+  els.txtToken.value = '';
+  showToast(r && r.message ? r.message : '', r && r.ok ? 'ok' : 'warn');
+  renderTokenStatus(r && r.status);
+}
+
+async function clearToken() {
+  const r = await window.dsh.clearGithubToken();
+  showToast(r && r.message ? r.message : '', r && r.ok ? 'ok' : 'warn');
+  renderTokenStatus(r && r.status);
+}
+
 function collectConfig() {
   return {
     dshUrl: els.txtUrl.value.trim() || 'http://127.0.0.1:3080',
@@ -489,6 +536,7 @@ function applyLanguage(cfg) {
   setI18nLang(lang);
   applyI18nStatic();
   // 重建动态区域（渲染层按当前语言重新生成）
+  renderTokenStatus(lastTokenStatus);
   switchTab(activeTab);
   window.dsh.getState().then(renderState);
 }
@@ -513,12 +561,13 @@ function hideUpdateModal() {
 function showAbout(s) {
   els.aboutBody.innerHTML = '';
   const info = s.appInfo || {};
+  // 运行时几项由后端给出名称（Electron/Node.js/Chromium 或 Tauri/Rust/WebView2）——
+  // 都是专有名词，不需要 i18n，这样同一份渲染层能同时服务两种后端。
+  const runtime = Array.isArray(info.runtime) ? info.runtime : [];
   const rows = [
     [t('aboutAppVersion'), info.appVersion],
     [t('aboutDshVersion'), s.installedVersion],
-    [t('aboutElectron'), info.electronVersion],
-    [t('aboutNode'), info.nodeVersion],
-    [t('aboutChromium'), info.chromeVersion],
+    ...runtime.map((r) => [r.name, r.version]),
   ];
   for (const [k, v] of rows) {
     const r = el('div', 'about-row');
@@ -584,6 +633,9 @@ els.chkAutoUpdateManager.addEventListener('change', saveConfig);
 els.chkSilent.addEventListener('change', saveConfig);
 els.selUpdateChannel.addEventListener('change', saveConfig);
 els.selTheme.addEventListener('change', () => { saveConfig(); applyTheme(els.selTheme.value); });
+els.btnTokenSave.addEventListener('click', saveToken);
+els.btnTokenClear.addEventListener('click', clearToken);
+els.txtToken.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveToken(); });
 els.selLang.addEventListener('change', () => {
   saveConfig();
   const lang = resolveUiLang({ language: els.selLang.value });
@@ -649,3 +701,13 @@ window.dsh.getState().then((s) => {
   renderState(s);
   switchTab('home');
 });
+
+// 令牌是 Tauri 版才有的能力，Electron 的 preload 没有这几个命令。渲染层两边共用，
+// 所以这里探一下：没有就把整行藏掉，别摆一个点了没反应的控件在设置里。
+if (window.dsh.getTokenStatus) {
+  window.dsh.getTokenStatus().then(renderTokenStatus);
+} else {
+  const row = els.txtToken.closest('.field');
+  if (row) row.hidden = true;
+  els.tokenState.hidden = true;
+}

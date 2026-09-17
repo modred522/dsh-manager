@@ -20,16 +20,25 @@
 1. **Node `spawn`/`exec` 带管道 stdio 会同步抛 EPERM**（capture 子进程输出被沙箱禁止）。→ 所有 spawn 调用必须 try/catch 同步异常（main.js 已全部包好）。
 2. **WMI 被禁**：`Get-CimInstance Win32_Process` 返回"拒绝访问"；wmic 同样。→ 沙箱里无法验证进程命令行/CPU 采样。
 3. **Get-NetTCPConnection 返回空**，但 `netstat -ano` 可用、`Get-Process` 可用、Node `fetch` 网络可用（PowerShell Invoke-RestMethod 的 SSL 会失败）。
-4. **Electron GUI 在沙箱里跑不起来**：Chromium 原生沙箱对 userData 目录报 `拒绝访问 / network_sandbox` FATAL——**不是代码问题**。验证方式：`node --check` + 逻辑单测 + 让用户真机验收。
+4. **GUI 在沙箱里跑不起来**：Electron 时代是 Chromium 沙箱对 userData 目录报 `拒绝访问 / network_sandbox` FATAL；换成 Tauri 后同样起不来（WebView2 需要真实桌面会话）。**都不是代码问题**。验证方式：`cargo test` 逻辑单测 + `npx tauri build` + **隔离启动烟测**（验产物本身能起、不崩、不乱动环境）+ 让用户真机验收。
 5. 跑 dsh 相关命令需注意：`npm view/install` 会写 npm 缓存（沙箱 EPERM）；可设 `$env:npm_config_cache` 到工作区内目录绕过。
 
-## 三、Electron 安装与运行
+## 三、历史：Electron 时代的打包坑（后端已退场，教训仍然成立）
 
-1. **安装 electron 的二进制下载缓存环境变量是 `electron_config_cache`**（@electron/get 读取），**不是** `ELECTRON_CACHE`。设置错会报 `EPERM: mkdir 'C:\Users\...\AppData\Local\electron'`。安装流程：设该变量 → `npm install` → 若 `node_modules\electron\dist\electron.exe` 缺失则手动 `node node_modules\electron\install.js`。
-2. **单实例锁的坑**：改了代码交付时，用户双击快捷方式只会唤醒**旧实例**（旧代码）→ "没有新功能"。交付前必须：`Get-Process electron | Stop-Process -Force`（taskkill 有时报 Access denied，Stop-Process 更稳；个别残留 crashpad_handler 可能杀不掉，占着旧目录句柄）。
-3. 未打包应用的路径约定：`process.execPath` = electron.exe；`app.getAppPath()` = 项目目录；桌面快捷方式 = `TargetPath=electron.exe` + `Arguments="<项目目录>"` + `Icon=assets\app.ico`。
-4. `shell.writeShortcutLink` 操作用 `'replace'`（不是 'create'，否则文件已存在会失败）。
-5. **`electron-builder.yml` 的 `files` 是白名单，漏列的源码目录会被静默丢掉**（本项目 `asar: false`，只拷白名单）。v1.0.5 就是这么发坏的：`lib/` 拆分后没加进 `files`，而 `main.js` 顶层 `require('./lib/pure')` → 装出来的应用一启动就 `Error: Cannot find module './lib/pure'`，**从发布到发现坏了 3 周多**。注意 `node_modules` 的生产依赖是被特殊处理、自动打进去的（所以 `electron-updater` 在、`lib/` 不在），别被这种不对称骗过去。**防线（已内置）**：`tools/check-package.js` 从入口递归跟踪相对 require，核对是否命中白名单（check.yml/release.yml 都跑）；`tools/after-pack.js` 挂在 electron-builder 的 `afterPack` 上，在**发布前**验真实产物，缺文件就中止发布。**教训：`node --check` 过了不代表装得起来 —— 只有对产物本身做核对才拦得住。**
+Electron 后端已经删除，这一节只保留有普遍价值的那条。
+
+**`electron-builder.yml` 的 `files` 是白名单，漏列的源码目录会被静默丢掉**（当时
+`asar: false`，只拷白名单）。v1.0.5 就是这么发坏的：`lib/` 拆分后没加进 `files`，
+而 `main.js` 顶层 `require('./lib/pure')` → 装出来的应用一启动就
+`Error: Cannot find module './lib/pure'`，**从发布到发现坏了 3 周多**。更容易上当的是
+不对称：`node_modules` 的生产依赖被特殊处理、自动打进去（所以 `electron-updater` 在、
+`lib/` 不在）。
+
+**教训（这才是要带走的）：`node --check` 过了不代表装得起来 —— 只有对产物本身做核对
+才拦得住。** 现在这条防线是隔离启动烟测：跑真实的 `tauri build` 产物，验它能起、
+不崩、不乱动用户环境、前端没有未捕获异常。Tauri 侧没有 `files` 白名单这种东西
+（前端资源直接嵌进 exe），但"只信产物、不信源码检查"的原则照旧。
+
 
 ## 四、dsh 集成坑
 
@@ -51,15 +60,23 @@
 
 ## 六、交付检查清单（每次改完跑一遍）
 
-- [ ] `node --check` 六个 JS 文件（main / preload / lib/pure / lib/market / renderer / market）
-- [ ] `npm test`（纯函数单测；**受限环境用 `--test-isolation=none` 规避 node:test 子进程 spawn EPERM**）
-- [ ] renderer.js 的 `$('id')` 与 index.html 的 `id=` 交叉核对（历史上靠这个抓过缺元素）
-- [ ] preload 的 invoke 通道与 main.js 的 ipcMain.handle 一一对应
+- [ ] `cd src-tauri && cargo fmt --all --check`
+- [ ] `cargo clippy --all-targets -- -D warnings`
+- [ ] `cargo test`
+- [ ] `node tools/check-i18n.js` —— i18n 键集对齐 + `$('id')` 与 HTML 的 `id=` 交叉核对
+      + **共享全局不被遮蔽**（`renderUsage` 里一个 `const t` 就让用量页少渲染两块）
+      + **CSS 写死宽度 + nowrap 的溢出风险**（用量页曾因此多出一条横向滚动条）
+- [ ] `node --check` 渲染层四个 JS（renderer / market / i18n / tauri-bridge）
+- [ ] `npx tauri build` + **隔离启动烟测**（`DSH_MANAGER_DATA` 重定向数据目录、
+      配置里关掉桌面快捷方式与自启、用 `tasklist` 判存活、断言日志里没有 `[前端错误]`）
+- [ ] 新增命令：`generate_handler!` 里注册了吗？建窗命令写成 `async` 了吗？
+- [ ] 新增事件：`capabilities/default.json` 覆盖到了吗？改完 **`touch src-tauri/build.rs`**
+      强制 build script 重跑，否则产物里还是旧 ACL（这个坑让我一度以为修复没生效）
 - [ ] 涉及 .ps1：确认纯 ASCII + 在 `powershell.exe`（5.1）下跑通
-- [ ] `Get-Process electron | Stop-Process -Force` 杀旧实例
+- [ ] 涉及凭据 / 令牌：确认完整值既不回传渲染层、也不进日志（见 `token.rs` 的三条铁律）
+- [ ] 涉及发版：`node tools/set-version.js <版本>` 必须把三处 manifest 都写到
+      （漏了 `Cargo.toml` 的话，装出去的客户端永远认为自己是占位版本）
+- [ ] 提交前：`git log --format='%an <%ae>'` 确认作者是仓库既有身份，不是机器的全局配置
+- [ ] 提交前：锁文件只指向 `registry.npmjs.org`（本机 npm 默认走内网镜像，
+      任何一次 `npm install` 都会把内网主机名写回去）
 - [ ] 告知用户：重启管理器后验证（沙箱里无法 GUI 实测）
-- [ ] 发布公共仓库前：确认无个人路径/密钥，node_modules 被 .gitignore 排除
-- [ ] 涉及界面文案：跑 `node tools\check-i18n.js`（i18n key 交叉核对）+ 确认新词条中英都写了
-- [ ] 涉及窗口/托盘图标：确认 `app.setAppUserModelId` 已设、BrowserWindow icon 用 ICO（Windows 任务栏用 exe 图标，PNG 只作用标题栏）
-- [ ] 涉及管理器自身更新：electron-updater 只在 `app.isPackaged` 下生效，且需要 **NSIS 目标 + GitHub publish 元数据**（zip 目标不支持自动更新）；`latest.yml` 由 electron-builder `--publish always` 生成并上传到 Release
-- [ ] 代码签名：未配 `CSC_LINK`/`CSC_KEY_PASSWORD` 时 electron-builder 自动跳过签名（不报错）；配置后自动签。自签证书对 SmartScreen 无效，正式发布需 OV/EV 证书

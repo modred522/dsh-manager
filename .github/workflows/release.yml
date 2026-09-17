@@ -18,24 +18,33 @@ jobs:
         with:
           node-version: 24
 
-      - name: Set release metadata (version from tag)
+      # 版本号必须同时写进 package.json / Cargo.toml / tauri.conf.json。
+      # 只写 package.json（Electron 时代那样）的话，编译进 exe 的
+      # CARGO_PKG_VERSION 还是仓库里的占位值 1.0.0，装出去的客户端会永远
+      # 认为自己是 1.0.0、每次启动都报"有新版"。脚本自带回读校验。
+      - name: Stamp version from tag
+        run: node tools/set-version.js ${{ github.ref_name }}
+
+      - name: Install @tauri-apps/cli
+        run: npm ci
+
+      - name: Build
+        run: npx tauri build
+
+      # 不用 tauri-plugin-updater（决策 4，见 docs/TAURI-MIGRATION.md 第十六节），
+      # 所以这里只上传安装器，不产 latest.json、也不需要签名密钥。
+      - name: Publish installer to the release
         shell: pwsh
-        run: |
-          $v = $env:GITHUB_REF_NAME.Substring(1)
-          npm pkg set version=$v
-          npm pkg set author=modred522
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Packaging completeness (require vs electron-builder files)
-        run: node tools/check-package.js
-
-      # 构建并发布：electron-builder 用 GH_TOKEN 上传 NSIS 安装器 + zip + latest.yml
-      # 到 GitHub Release；若配置了 CSC_LINK/CSC_KEY_PASSWORD 则同时做代码签名。
-      - name: Build, sign and publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-        run: npx electron-builder --win nsis zip --x64 --config electron-builder.yml --publish always
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $exe = Get-ChildItem 'src-tauri/target/release/bundle/nsis/*-setup.exe' | Select-Object -First 1
+          if (-not $exe) { throw "找不到 NSIS 安装器，构建产物路径变了？" }
+          Write-Host "安装器: $($exe.Name) ($([math]::Round($exe.Length/1MB,1)) MB)"
+          # tag push 不会自动建 release；已存在就复用，所以这一步是幂等的。
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --title $tag --generate-notes
+          }
+          gh release upload $tag $exe.FullName --clobber

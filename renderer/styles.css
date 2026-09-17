@@ -573,6 +573,14 @@ header.card {
 }
 
 #txtUrl { width: 200px; }
+#txtToken { width: 150px; }
+
+/* 令牌当前状态（未设置 / 已保存 / 来自环境变量），纯提示，不占一行控件高度 */
+.token-state {
+  font-size: 12px;
+  color: var(--text-mid);
+  margin-top: -2px;
+}
 #txtInterval { width: 70px; }
 
 .tools {
@@ -830,6 +838,16 @@ header.card {
   overflow-y: auto;
 }
 
+/* ---------------- 滚动条 ---------------- */
+/* WebView2 默认滚动条又粗又灰，跟这套界面不搭。
+   注意：横向滚动条出现本身就是布局 bug 的征兆（内容顶出了容器），
+   要修的是溢出，不是用样式把它遮好看 —— 用量页那条就是 .project-val
+   写死宽度溢出来的，已在上面单独修掉。 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--input-border) transparent;
+}
+
 /* ---------------- 用量面板 ---------------- */
 .usage-stats {
   display: grid;
@@ -933,6 +951,9 @@ header.card {
 
 .bar-track {
   flex: 1;
+  /* flex 子项默认 min-width: auto，不显式给 0 的话它不肯让位，
+     右侧数值就只能往卡片外面挤。 */
+  min-width: 0;
   height: 18px;
   background: var(--track);
   border-radius: 999px;
@@ -948,7 +969,13 @@ header.card {
 }
 
 .project-val {
-  width: 110px;
+  /* 别改回固定 width。projVal 的文案是"输出 11.7 万 · 共 262.9 万 · 12 会话"，
+     实测 191px；原先写死 110px 又带 nowrap，文本直接溢出到卡片外，把整个
+     标签页顶出一条横向滚动条（.tab-page.scrollable 只声明了 overflow-y: auto，
+     但 CSS 规定另一轴的 visible 会被提升为 auto，所以滚动条就出来了）。
+     按内容撑开 + 最小宽度，短数值仍能右对齐。 */
+  flex: 0 0 auto;
+  min-width: 110px;
   font-size: 12px;
   color: var(--text-mid);
   text-align: right;

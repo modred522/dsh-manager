@@ -34,10 +34,13 @@
 18. **main.js 拆分 + 纯函数单测**：抽 `lib/pure.js`（compareVersions/parseVersion/normalizeGithubUrl/parseCimDate/releaseBodyToText/extractAnalysisJson/npmItem/githubItem，无副作用可测）与 `lib/market.js`（searchMarketPage/getNpmPluginInfo/getGithubPluginInfo，只读纯网络，`searchMarketPage` 通过参数注入 `coreDshPackages`）；main.js 从 1933 行减到约 1510 行；`test/pure.test.js` 13 条用例、`npm test`（**用 `--test-isolation=none` 规避受限环境的 spawn EPERM**）、check.yml 增加单测步骤；renderer 里仍保留一份 compareVersions（浏览器上下文无法 require，改动时需与 lib/pure.js 同步）。
 19. **v1.0.6 热修（打包漏配 + 日志/更新通道）**：① **P0** `electron-builder.yml` 的 `files` 补 `lib/**` —— v1.0.5 的安装器与 zip 都缺 `lib/`，装上即 `Cannot find module './lib/pure'`（详见 GOTCHAS 三.5）；同时加 `tools/check-package.js`（静态核对，接入 check.yml/release.yml）与 `tools/after-pack.js`（electron-builder `afterPack` 钩子，发布前验产物，失败即中止）。② 日志保留 7 天原先只在启动时清一次，托盘常驻应用一跑数周就形同虚设（实测留着 11 天前的文件）→ 追加 6 小时周期清理。③ `log()` 落盘/广播前走 `redactSecrets()` 打码：`dsh web` 会把带 token 的地址打到 stdout，而日志留 7 天且能一键导出。④ 子进程输出改走 `logChildOutput()`：拆行（chunk 自带换行会多出空行）+ 连续重复折叠（实测某插件余额接口 401 两分钟刷 60+ 条）+ 每分钟 200 行上限。⑤ 更新检查取所有 dist-tags 最高版本会把用户静默推上 alpha（实测 0.1.5-rc.2 → 0.1.6-alpha.1）→ 新增配置 `updateChannel`（`all` 含预发布 / `latest` 仅稳定，默认沿用 `all` 不改变原有行为），预发布版在日志、通知、更新弹窗里都明确标注。⑥ 顺带补齐 `package-lock.json`（v1.0.4 加的 `electron-updater` 一直没进 lock）。
 
+20. **Electron → Tauri 2 重构 + Electron 退场**：全过程与历次真机验收记在 `docs/TAURI-MIGRATION.md`（16 节）。前端**一行没改** —— `renderer/tauri-bridge.js` 把 `window.dsh.*` 架在 invoke/listen 上，同一份 renderer 先后服务两种后端。实测：安装器 95.6MB → **2.3MB**，主程序 215.1MB → **6.3MB**，常驻内存 150-250MB → **约 40MB**。本次退场删掉 `main.js` / `preload.js` / `lib/` / `find-dsh.ps1` / `electron-builder.yml` / `tools/check-package.js` / `tools/after-pack.js` / `tools/build-release.ps1` / `test/`，`package.json` 只剩 `@tauri-apps/cli`（锁文件 39 → 13 个包），CI 换成 cargo 三件套 + 渲染层自检，发版工作流换成 `npx tauri build` + `gh release upload`，并新增 `tools/set-version.js`（**必须把版本号写进三处 manifest**，漏了 `Cargo.toml` 装出去的客户端会永远认为自己是占位版本）。**决策 4（更新器迁移）已定：不引入 `tauri-plugin-updater`**，它强制 Ed25519 签名 = 一把要永久保管的私钥，丢了所有已装客户端再也无法自动更新；改成"启动时只检查、提示手动下载"，而 v1.0.6 早已内置 `latest.yml` 404 时的过渡提示，所以不用再发过渡版。真机验收三轮抓到的真 bug：市场窗口同步命令建窗导致主线程自锁（白屏 + 关不掉）、`capabilities/` 缺失导致前端 `listen()` 全被拒（界面看着正常但实时日志/状态轮询全死）、`renderUsage` 里 `const t` 遮蔽 i18n 的 `t()`（用量页项目排行与趋势图从初版起就没渲染过）、`.project-val` 写死宽度顶出横向滚动条、dev 构建往桌面写了个打不开的快捷方式；另有一个误报：市场"获取失败"其实是 GitHub 未登录接口按出口 IP 限 60 次/小时、公司 NAT 下全办公室共用 → 补了可选 GitHub 令牌（存 Windows 凭据管理器，只发 `api.github.com`）。
+
 ## 三、当前状态
 
-- **项目位置**：仓库根目录（自包含：源码 + node_modules/electron 43.4.0 + 鲸鱼 assets）。
-- **启动方式**：桌面「DSH 管理器」快捷方式（指向 `<项目根>\node_modules\electron\dist\electron.exe`，参数为项目目录）；或在该目录 `npm start`。
+- **项目位置**：仓库根目录（`src-tauri/` Rust 后端 + `renderer/` 前端 + 鲸鱼 assets；`node_modules/` 只有 `@tauri-apps/cli`）。
+- **启动方式**：桌面「DSH 管理器」快捷方式（指向安装目录的 `DSH Manager.exe`）；开发时 `npx tauri dev`。
+  **别拿 `tauri dev` 的产物建快捷方式** —— debug 是控制台子系统且前端指向 dev 服务器，脱离 dev 打开只会显示"无法访问此页面"（应用已拒绝在 debug 构建下写快捷方式）。
 - **dsh 版本**：0.1.0-rc.7（2026-08-17 发布；npm 全局安装，前缀用 `npm prefix -g` 解析）。
 - **DSH_HOME**：`~\.dsh`（默认；含凭据 `.env`、`settings.yaml`——默认模型 `deepseek-modlens / deepseek-v4-pro`、web profile 已装 `@liustack/modlens`）。
 - **配置**：`%APPDATA%\DshManager\config.json`（模式见 ARCHITECTURE.md）。
@@ -47,7 +50,7 @@
 
 | 决策 | 原因 |
 |---|---|
-| 用 Electron 而非继续 .NET | 用户明确要求；UI 用 Web 技术开发效率高 |
+| 用 Electron 而非继续 .NET | 用户明确要求；UI 用 Web 技术开发效率高（**已于第 20 条退场，换成 Tauri 2**，理由见 TAURI-MIGRATION.md 第七节） |
 | 检测 dsh 用 **netstat 端口** 为主、WMI 命令行为辅 | WMI 路径匹配不可靠；netstat 在实测中稳定命中监听 3080 的进程 |
 | 分析插件采用**管理器收集档案 → headless 判断** | headless profile 无联网工具（官方描述 "no Host, HTTP, or browser layer"）；且比代理自主浏览更省 token、更可控 |
 | 分析结果用**结构化 JSON 评分卡** | Phase 0 实测模型能严格只输出一行 JSON（score/verdict/summary/pros/cons/risks） |
